@@ -1,4 +1,4 @@
-import { useContext, useState, useEffect, useRef } from 'react';
+import { useContext, useState, useEffect, useRef, useMemo } from 'react';
 import { ChatContext } from '../contexts/ChatContext';
 import { AuthContext } from '../contexts/AuthContext';
 import ChatRoomManager from './ChatRoomManager';
@@ -31,8 +31,8 @@ import {
   FiVideo,
   FiPaperclip,
   FiSettings,
-  FiMoreVertical,
-  FiImage
+  FiPhoneCall,
+  FiPhoneOff
 } from 'react-icons/fi';
 
 const QUICK_EMOJIS = ['⚽', '🔥', '🏆', '👍', '❤️', '👏', '😊', '💪', '🎯', '🥇'];
@@ -51,7 +51,10 @@ export default function ChatDrawer() {
     startTyping,
     stopTyping,
     deleteMessage,
-    markRoomRead
+    markRoomRead,
+    incomingCall,
+    setIncomingCall,
+    triggerCallNotification
   } = useContext(ChatContext);
 
   const [inputContent, setInputContent] = useState('');
@@ -78,6 +81,29 @@ export default function ChatDrawer() {
   const messagesEndRef = useRef(null);
   const typingTimeoutRef = useRef(null);
   const textareaRef = useRef(null);
+
+  // Strictly Deduplicate Rooms list
+  const uniqueRooms = useMemo(() => {
+    if (!Array.isArray(rooms)) return [];
+    return rooms.reduce((acc, room) => {
+      if (!room || !room._id) return acc;
+      if (acc.some((r) => r._id === room._id)) return acc;
+
+      if (room.type === 'direct' && Array.isArray(room.members)) {
+        const otherMember = room.members.find((m) => String(m._id || m) !== String(user?._id));
+        const otherMemberId = otherMember?._id || otherMember;
+        const existingDm = acc.find((r) => {
+          if (r.type !== 'direct' || !Array.isArray(r.members)) return false;
+          const other = r.members.find((m) => String(m._id || m) !== String(user?._id));
+          return String(other?._id || other) === String(otherMemberId);
+        });
+        if (existingDm) return acc;
+      }
+
+      acc.push(room);
+      return acc;
+    }, []);
+  }, [rooms, user]);
 
   const startRecording = async () => {
     try {
@@ -149,15 +175,15 @@ export default function ChatDrawer() {
     setRecordingDuration(0);
   };
 
-  const activeRoom = rooms.find((r) => r._id === activeRoomId);
-  const activeMessages = messages[activeRoomId] || [];
-  const activeTyping = typingUsers[activeRoomId] || [];
+  const activeRoom = uniqueRooms.find((r) => r._id === activeRoomId) || uniqueRooms[0] || null;
+  const activeMessages = messages[activeRoom?._id] || [];
+  const activeTyping = typingUsers[activeRoom?._id] || [];
 
   const isBroadcast = activeRoom?.type === 'broadcast';
   const canSendInActiveRoom = !isBroadcast || user?.role === 'admin';
 
   // Filter conversations list
-  const filteredRooms = rooms.filter((room) => {
+  const filteredRooms = uniqueRooms.filter((room) => {
     if (!conversationSearch.trim()) return true;
     const query = conversationSearch.toLowerCase();
     const displayName = getRoomDisplayName(room).toLowerCase();
@@ -173,14 +199,14 @@ export default function ChatDrawer() {
     : activeMessages;
 
   // Total unread count
-  const totalUnread = rooms.reduce((acc, r) => acc + (r.unreadCount || 0), 0);
+  const totalUnread = uniqueRooms.reduce((acc, r) => acc + (r.unreadCount || 0), 0);
 
   // Auto scroll to bottom when new messages arrive
   useEffect(() => {
     if (isChatOpen) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [activeMessages.length, isChatOpen, activeRoomId]);
+  }, [activeMessages.length, isChatOpen, activeRoom?._id]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -194,11 +220,11 @@ export default function ChatDrawer() {
     const value = e.target.value;
     setInputContent(value);
 
-    if (activeRoomId && canSendInActiveRoom) {
-      startTyping(activeRoomId);
+    if (activeRoom?._id && canSendInActiveRoom) {
+      startTyping(activeRoom._id);
       if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
       typingTimeoutRef.current = setTimeout(() => {
-        stopTyping(activeRoomId);
+        stopTyping(activeRoom._id);
       }, 2000);
     }
   };
@@ -212,17 +238,17 @@ export default function ChatDrawer() {
 
   const handleSend = async (e) => {
     if (e) e.preventDefault();
-    if (!inputContent.trim() || !activeRoomId || !canSendInActiveRoom || isSending) return;
+    if (!inputContent.trim() || !activeRoom?._id || !canSendInActiveRoom || isSending) return;
 
     const text = inputContent.trim();
     setInputContent('');
     setShowEmojiPicker(false);
-    stopTyping(activeRoomId);
+    stopTyping(activeRoom._id);
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
 
     try {
       setIsSending(true);
-      await sendMessage(activeRoomId, text);
+      await sendMessage(activeRoom._id, text);
     } catch {
       setInputContent(text);
     } finally {
@@ -309,23 +335,58 @@ export default function ChatDrawer() {
   if (!isChatOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/80 backdrop-blur-md p-2 sm:p-6 lg:p-8 flex items-center justify-center font-space">
+    <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/85 backdrop-blur-md p-2 sm:p-6 lg:p-8 flex items-center justify-center font-space">
       {/* Background Overlay Click to Close */}
       <div className="absolute inset-0" onClick={() => setIsChatOpen(false)} />
 
+      {/* INCOMING CALL NOTIFICATION MODAL BANNER */}
+      {incomingCall && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-md rounded-2xl border-2 border-emerald-500/60 bg-[#041d13] p-4 shadow-2xl animate-bounce">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-slate-950 animate-pulse">
+                <FiPhoneCall size={20} />
+              </div>
+              <div>
+                <h4 className="font-bold text-xs text-white">INCOMING CALL FROM {incomingCall.callerName?.toUpperCase()}</h4>
+                <p className="text-[10px] text-emerald-400">Click Join to connect with audio & video</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIncomingCall(null)}
+                className="rounded-xl border border-rose-500/30 bg-rose-950/50 p-2 text-rose-300 hover:bg-rose-900 transition"
+              >
+                <FiPhoneOff size={16} />
+              </button>
+              <button
+                onClick={() => {
+                  setIncomingCall(null);
+                  if (activeRoom) triggerCallNotification(activeRoom._id, true);
+                }}
+                className="flex items-center gap-1 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition"
+              >
+                <FiPhoneCall size={14} />
+                <span>ANSWER</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* FULL TWO-PANEL MESSENGER CONTAINER */}
-      <div className="relative z-10 w-full max-w-6xl h-[88vh] bg-[#04110a] border-2 border-emerald-900/40 rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
+      <div className="relative z-10 w-full max-w-6xl h-[88vh] bg-[#020905] border-2 border-emerald-900/40 rounded-3xl shadow-2xl overflow-hidden flex flex-col md:flex-row">
         
         {/* ═════════════════════════════════════════════════════════════
             LEFT PANEL — CONVERSATIONS LIST (~30% - 35% WIDTH)
             ═════════════════════════════════════════════════════════════ */}
         <div
-          className={`w-full md:w-80 lg:w-96 border-r border-emerald-900/30 bg-[#03140c] flex flex-col ${
+          className={`w-full md:w-80 lg:w-96 border-r border-emerald-900/30 bg-[#031109] flex flex-col ${
             mobileShowChat ? 'hidden md:flex' : 'flex'
           }`}
         >
           {/* Left Header */}
-          <div className="flex items-center justify-between border-b border-emerald-900/30 p-4 bg-[#051c12]/90">
+          <div className="flex items-center justify-between border-b border-emerald-900/30 p-4 bg-[#051a0f]/90">
             <div className="flex items-center gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-tr from-emerald-500 to-teal-400 text-slate-950 font-anton text-lg shadow-md shadow-emerald-500/20">
                 MU
@@ -383,7 +444,7 @@ export default function ChatDrawer() {
               )}
 
               {/* Conversation Search Bar */}
-              <div className="p-3 border-b border-emerald-900/30 bg-[#041a10]">
+              <div className="p-3 border-b border-emerald-900/30 bg-[#020d07]">
                 <div className="relative flex items-center">
                   <FiSearch className="absolute left-3 text-slate-400" size={14} />
                   <input
@@ -391,7 +452,7 @@ export default function ChatDrawer() {
                     placeholder="Search conversations..."
                     value={conversationSearch}
                     onChange={(e) => setConversationSearch(e.target.value)}
-                    className="w-full rounded-xl border border-emerald-900/40 bg-[#020e07] pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+                    className="w-full rounded-xl border border-emerald-900/40 bg-[#010804] pl-9 pr-4 py-2 text-xs text-slate-100 placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
                   />
                   {conversationSearch && (
                     <button onClick={() => setConversationSearch('')} className="absolute right-3 text-slate-400 hover:text-white">
@@ -413,7 +474,7 @@ export default function ChatDrawer() {
                 </button>
               </div>
 
-              {/* Conversations List */}
+              {/* Deduplicated Conversations List */}
               <div className="flex-1 overflow-y-auto p-2 space-y-1">
                 {filteredRooms.length === 0 ? (
                   <div className="p-6 text-center text-slate-500 text-xs font-semibold">
@@ -421,7 +482,7 @@ export default function ChatDrawer() {
                   </div>
                 ) : (
                   filteredRooms.map((room) => {
-                    const isActive = room._id === activeRoomId;
+                    const isActive = room._id === activeRoom?._id;
                     const displayName = getRoomDisplayName(room);
                     const dmMember = getDmMember(room);
                     const roomMsgs = messages[room._id] || [];
@@ -450,7 +511,6 @@ export default function ChatDrawer() {
                               {getRoomIcon(room.type)}
                             </div>
                           )}
-                          {/* Online indicator dot for direct messages */}
                           {room.type === 'direct' && (
                             <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full bg-emerald-400 border-2 border-slate-950" />
                           )}
@@ -488,14 +548,14 @@ export default function ChatDrawer() {
             RIGHT PANEL — ACTIVE CHAT THREAD (~65% - 70% WIDTH)
             ═════════════════════════════════════════════════════════════ */}
         <div
-          className={`flex-1 flex flex-col bg-[#04150e] ${
+          className={`flex-1 flex flex-col bg-[#020905] ${
             !mobileShowChat ? 'hidden md:flex' : 'flex'
           }`}
         >
           {activeRoom ? (
             <>
               {/* Right Header */}
-              <div className="flex items-center justify-between border-b border-emerald-900/30 bg-[#051c12]/90 p-3.5">
+              <div className="flex items-center justify-between border-b border-emerald-900/30 bg-[#051a0f]/90 p-3.5">
                 <div className="flex items-center gap-3">
                   {/* Mobile Back Button */}
                   <button
@@ -535,6 +595,7 @@ export default function ChatDrawer() {
                 <div className="flex items-center gap-2">
                   {/* Audio Call */}
                   <button
+                    onClick={() => triggerCallNotification(activeRoom._id, false)}
                     className="rounded-xl border border-emerald-900/40 bg-emerald-950/40 p-2.5 text-emerald-400 hover:bg-emerald-900/60 hover:text-white transition"
                     title="Start Audio Call"
                   >
@@ -543,6 +604,7 @@ export default function ChatDrawer() {
 
                   {/* Video Call */}
                   <button
+                    onClick={() => triggerCallNotification(activeRoom._id, true)}
                     className="rounded-xl border border-emerald-900/40 bg-emerald-950/40 p-2.5 text-emerald-400 hover:bg-emerald-900/60 hover:text-white transition"
                     title="Start Video Call"
                   >
@@ -613,7 +675,7 @@ export default function ChatDrawer() {
               <VideoConferencePanel activeRoom={activeRoom} user={user} />
 
               {/* Messages Thread Canvas */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#03110a]">
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-[#010904]">
                 {/* Date Divider Badge */}
                 <div className="flex items-center justify-center my-3">
                   <span className="rounded-full border border-emerald-900/50 bg-[#062417] px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 shadow-sm">
@@ -700,7 +762,7 @@ export default function ChatDrawer() {
                             )}
                             {user?.role === 'admin' && (
                               <button
-                                onClick={() => deleteMessage(msg._id, activeRoomId)}
+                                onClick={() => deleteMessage(msg._id, activeRoom._id)}
                                 className="hidden group-hover:inline-block text-rose-400 hover:text-rose-300 ml-1"
                                 title="Delete message"
                               >
@@ -889,7 +951,7 @@ export default function ChatDrawer() {
         onChange={(e) => {
           if (e.target.files?.[0]) {
             const file = e.target.files[0];
-            sendMessage(activeRoomId, `📎 Attached file: ${file.name}`);
+            sendMessage(activeRoom?._id, `📎 Attached file: ${file.name}`);
           }
         }}
       />

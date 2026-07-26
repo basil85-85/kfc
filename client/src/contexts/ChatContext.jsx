@@ -6,6 +6,32 @@ import api from '../services/api';
 
 export const ChatContext = createContext();
 
+// Web Audio API Synthesizer for instant notification chime
+const playNotificationChime = () => {
+  try {
+    const AudioContext = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContext) return;
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5 note
+    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5 note
+
+    gain.gain.setValueAtTime(0.2, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + 0.35);
+  } catch {
+    // Ignore audio autoplay restrictions
+  }
+};
+
 export const ChatProvider = ({ children }) => {
   const { user } = useContext(AuthContext);
   const toast = useToast();
@@ -18,6 +44,7 @@ export const ChatProvider = ({ children }) => {
   const [typingUsers, setTypingUsers] = useState({}); // { [roomId]: Array<{_id, name}> }
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
+  const [incomingCall, setIncomingCall] = useState(null); // { callerName, roomName, isVideo }
 
   const activeRoomIdRef = useRef(activeRoomId);
   activeRoomIdRef.current = activeRoomId;
@@ -25,13 +52,13 @@ export const ChatProvider = ({ children }) => {
   const isChatOpenRef = useRef(isChatOpen);
   isChatOpenRef.current = isChatOpen;
 
-  // Derive Socket server URL from api baseURL or fallback
+  // Derive Socket server URL
   const getSocketUrl = () => {
     const apiBase = api.defaults?.baseURL || 'http://localhost:4000/api';
     return apiBase.replace(/\/api\/?$/, '');
   };
 
-  // Fetch accessible rooms & unread total
+  // Fetch accessible rooms & unread total with deduplication
   const fetchRooms = useCallback(async () => {
     if (!user) {
       setRooms([]);
@@ -42,14 +69,34 @@ export const ChatProvider = ({ children }) => {
     try {
       const { data } = await api.get('/chat/rooms');
       const roomList = Array.isArray(data) ? data : [];
-      setRooms(roomList);
 
-      const unreadSum = roomList.reduce((acc, r) => acc + (r.unreadCount || 0), 0);
+      // Deduplicate rooms by unique _id AND by DM target member
+      const uniqueRooms = roomList.reduce((acc, room) => {
+        if (!room || !room._id) return acc;
+        if (acc.some((r) => r._id === room._id)) return acc;
+
+        if (room.type === 'direct' && Array.isArray(room.members)) {
+          const otherMember = room.members.find((m) => String(m._id || m) !== String(user?._id));
+          const otherMemberId = otherMember?._id || otherMember;
+          const existingDm = acc.find((r) => {
+            if (r.type !== 'direct' || !Array.isArray(r.members)) return false;
+            const other = r.members.find((m) => String(m._id || m) !== String(user?._id));
+            return String(other?._id || other) === String(otherMemberId);
+          });
+          if (existingDm) return acc;
+        }
+
+        acc.push(room);
+        return acc;
+      }, []);
+
+      setRooms(uniqueRooms);
+
+      const unreadSum = uniqueRooms.reduce((acc, r) => acc + (r.unreadCount || 0), 0);
       setTotalUnread(unreadSum);
 
-      // Default active room if none set
-      if (!activeRoomIdRef.current && roomList.length > 0) {
-        setActiveRoomId(roomList[0]._id);
+      if (!activeRoomIdRef.current && uniqueRooms.length > 0) {
+        setActiveRoomId(uniqueRooms[0]._id);
       }
     } catch (err) {
       console.error('Failed to load chat rooms:', err);
@@ -125,7 +172,7 @@ export const ChatProvider = ({ children }) => {
     newSocket.on('new_message', (msg) => {
       const rId = msg.roomId;
 
-      // Update message list for this room
+      // Update message list
       setMessages((prev) => {
         const existing = prev[rId] || [];
         if (existing.some((m) => m._id === msg._id)) return prev;
@@ -135,7 +182,6 @@ export const ChatProvider = ({ children }) => {
         };
       });
 
-      // Update room metadata (lastMessage and unread count)
       const isCurrentActive = activeRoomIdRef.current === rId && isChatOpenRef.current;
 
       setRooms((prevRooms) =>
@@ -156,9 +202,10 @@ export const ChatProvider = ({ children }) => {
         setTotalUnread((prev) => prev + 1);
       }
 
-      // Check if message is in broadcast room or from admin and user is NOT sender -> Toast notification!
-      if (msg.sender?._id !== user._id && msg.senderTeam === null) {
-        toast?.addToast(`📢 Broadcast: ${msg.content.slice(0, 60)}...`, 'info');
+      // Incoming message chime & toast notification
+      if (msg.sender?._id !== user._id && msg.sender !== user._id) {
+        playNotificationChime();
+        toast?.addToast(`💬 ${msg.senderName || ' Teammate'}: ${msg.content || 'Voice Note'}`, 'info');
       }
     });
 
@@ -181,11 +228,12 @@ export const ChatProvider = ({ children }) => {
       });
     });
 
-    newSocket.on('message_deleted', ({ messageId, roomId }) => {
-      setMessages((prev) => ({
-        ...prev,
-        [roomId]: (prev[roomId] || []).filter((m) => m._id !== messageId),
-      }));
+    // Incoming Call socket event listener
+    newSocket.on('incoming_call', (data) => {
+      if (data.callerId !== user._id) {
+        playNotificationChime();
+        setIncomingCall(data);
+      }
     });
 
     setSocket(newSocket);
@@ -194,124 +242,67 @@ export const ChatProvider = ({ children }) => {
     return () => {
       newSocket.disconnect();
     };
-  }, [user]);
+  }, [user, fetchRooms]);
 
-  // When active room changes or chat drawer opens, auto mark room read & fetch messages
+  // Load messages when active room changes
   useEffect(() => {
     if (activeRoomId) {
-      if (!messages[activeRoomId]) {
-        loadRoomMessages(activeRoomId, 1);
-      }
-      if (isChatOpen) {
-        markRoomRead(activeRoomId);
-      }
+      loadRoomMessages(activeRoomId);
+      markRoomRead(activeRoomId);
     }
-  }, [activeRoomId, isChatOpen]);
+  }, [activeRoomId, loadRoomMessages, markRoomRead]);
 
-  // Send message via socket
-  const sendMessage = useCallback(
-    (roomId, content, messageType = 'text', audioUrl = '', audioDuration = 0) => {
-      if (!socket || !socket.connected) {
-        toast?.addToast('Chat server offline. Reconnecting...', 'error');
-        return Promise.reject(new Error('Socket disconnected'));
-      }
-      return new Promise((resolve, reject) => {
-        socket.emit('send_message', { roomId, content, messageType, audioUrl, audioDuration }, (res) => {
-          if (res?.error) {
-            toast?.addToast(res.error, 'error');
-            reject(new Error(res.error));
+  // Send message helper
+  const sendMessage = async (roomId, content, messageType = 'text', audioUrl = '', audioDuration = 0) => {
+    if (!socket || !socket.connected) {
+      throw new Error('Socket not connected');
+    }
+    return new Promise((resolve, reject) => {
+      socket.emit(
+        'send_message',
+        { roomId, content, messageType, audioUrl, audioDuration },
+        (response) => {
+          if (response?.error) {
+            toast?.addToast(`Failed: ${response.error}`, 'error');
+            reject(new Error(response.error));
           } else {
-            resolve(res.message);
+            resolve(response.message);
           }
-        });
-      });
-    },
-    [socket, toast]
-  );
+        }
+      );
+    });
+  };
 
-  // Typing triggers
-  const startTyping = useCallback(
-    (roomId) => {
-      if (socket && socket.connected) {
-        socket.emit('typing_start', { roomId });
-      }
-    },
-    [socket]
-  );
-
-  const stopTyping = useCallback(
-    (roomId) => {
-      if (socket && socket.connected) {
-        socket.emit('typing_stop', { roomId });
-      }
-    },
-    [socket]
-  );
-
-  // Moderation delete message
-  const deleteMessage = useCallback(
-    (messageId, roomId) => {
-      if (socket && socket.connected) {
-        socket.emit('delete_message', { messageId, roomId }, (res) => {
-          if (res?.error) {
-            toast?.addToast(res.error, 'error');
-          } else {
-            toast?.addToast('Message deleted', 'success');
-          }
-        });
-      }
-    },
-    [socket, toast]
-  );
-
-  // Create custom room
-  const createRoom = async (name, members) => {
-    try {
-      const { data } = await api.post('/chat/rooms', { name, members });
-      toast?.addToast(`Room "${data.name}" created!`, 'success');
-      await fetchRooms();
-      setActiveRoomId(data._id);
-      if (socket && socket.connected) {
-        socket.emit('join_rooms');
-      }
-      return data;
-    } catch (err) {
-      toast?.addToast(err.response?.data?.message || 'Failed to create room', 'error');
-      throw err;
+  const triggerCallNotification = (roomId, isVideo = true) => {
+    if (socket && socket.connected) {
+      socket.emit('start_call', { roomId, callerId: user?._id, callerName: user?.name, isVideo });
     }
   };
 
-  // Update custom room members
-  const updateRoomMembers = async (roomId, add, remove) => {
-    try {
-      const { data } = await api.put(`/chat/rooms/${roomId}/members`, { add, remove });
-      toast?.addToast('Room members updated', 'success');
-      await fetchRooms();
-      return data;
-    } catch (err) {
-      toast?.addToast(err.response?.data?.message || 'Failed to update members', 'error');
-      throw err;
+  const startTyping = (roomId) => {
+    if (socket && socket.connected) {
+      socket.emit('typing_start', { roomId });
     }
   };
 
-  // Create or open 1-on-1 Direct Message
-  const startDirectMessage = async (targetUserId) => {
-    try {
-      const { data: room } = await api.post('/chat/direct', { targetUserId });
-      await fetchRooms();
-      setActiveRoomId(room._id);
-      setIsChatOpen(true);
-      if (socket && socket.connected) {
-        socket.emit('join_rooms');
-      }
-      return room;
-    } catch (err) {
-      toast?.addToast(err.response?.data?.message || 'Failed to start direct message', 'error');
-      throw err;
+  const stopTyping = (roomId) => {
+    if (socket && socket.connected) {
+      socket.emit('typing_stop', { roomId });
     }
   };
 
-  const toggleChat = () => setIsChatOpen((prev) => !prev);
+  const deleteMessage = async (messageId, roomId) => {
+    try {
+      await api.delete(`/chat/messages/${messageId}`);
+      setMessages((prev) => ({
+        ...prev,
+        [roomId]: (prev[roomId] || []).filter((m) => m._id !== messageId),
+      }));
+      toast?.addToast('Message deleted', 'success');
+    } catch {
+      toast?.addToast('Failed to delete message', 'error');
+    }
+  };
 
   return (
     <ChatContext.Provider
@@ -325,18 +316,16 @@ export const ChatProvider = ({ children }) => {
         typingUsers,
         isChatOpen,
         setIsChatOpen,
-        toggleChat,
         loadingRooms,
-        fetchRooms,
-        loadRoomMessages,
-        markRoomRead,
         sendMessage,
         startTyping,
         stopTyping,
         deleteMessage,
-        createRoom,
-        updateRoomMembers,
-        startDirectMessage,
+        markRoomRead,
+        fetchRooms,
+        incomingCall,
+        setIncomingCall,
+        triggerCallNotification
       }}
     >
       {children}

@@ -1,5 +1,8 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { AuthContext } from '../contexts/AuthContext';
+import { ChatContext } from '../contexts/ChatContext';
+import api from '../services/api';
 import { 
   FiMessageSquare, 
   FiX, 
@@ -11,23 +14,15 @@ import {
   FiChevronRight,
   FiMove,
   FiRotateCcw,
-  FiSmile
+  FiSmile,
+  FiZap
 } from 'react-icons/fi';
 
-const QUICK_PROMPTS = [
-  { label: "🗓️ See what's coming up", path: '/fixtures', query: "What's coming up this week on the match schedule?" },
-  { label: "🙋 How do I join?", path: '/register', query: "How do I join the crew and sign up?" },
-  { label: "👀 Just looking around", path: '/squad', query: "Tell me more about the club vibe and squad highlights!" }
-];
-
-const INITIAL_WELCOME = {
-  id: 'welcome-1',
-  sender: 'bot',
-  text: "Heyyy, welcome! 🎉 You just found KFC Football Club — home of non-stop pitch action, FIFA stat cards, and matchday energy! Wanna see what we're up to this week, find out how to join the crew, or just poke around first?",
-  timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-};
-
 export default function AiAssistantWidget() {
+  const { user } = useContext(AuthContext);
+  const { setIsChatOpen } = useContext(ChatContext);
+  const navigate = useNavigate();
+
   const [isOpen, setIsOpen] = useState(false);
   const [isDismissed, setIsDismissed] = useState(() => {
     try {
@@ -37,13 +32,43 @@ export default function AiAssistantWidget() {
     }
   });
 
-  const [messages, setMessages] = useState([INITIAL_WELCOME]);
+  // Onboarding conversation state for non-logged-in users
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const [userName, setUserName] = useState('');
+
+  // Initial welcome message depending on auth state
+  const initialMsgText = user
+    ? `Heyyy ${user.name?.split(' ')[0] || 'Player'}! ⚽ Good to see you back on the pitch! Ask me anything about live match schedules, top player ratings, standings, or session signups!`
+    : "Heyyy, welcome! 🎉 You just found KFC Football Club — home of non-stop pitch action, FIFA stat cards, and matchday energy! Want to see what we're up to this week, join the crew in 30 seconds, or just poke around first?";
+
+  const [messages, setMessages] = useState([
+    {
+      id: 'welcome-1',
+      sender: 'bot',
+      text: initialMsgText,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    }
+  ]);
+
   const [inputText, setInputText] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef(null);
-  const navigate = useNavigate();
 
-  // Draggable position state (defaults to bottom right)
+  // Quick prompts depending on auth state
+  const quickPrompts = user
+    ? [
+        { label: "🗓️ Next Match", query: "When is our next match schedule?" },
+        { label: "⭐ Top Player Rating", query: "Who is the top rated player in the squad?" },
+        { label: "📋 Training Sessions", query: "Are there any training sessions coming up?" },
+        { label: "🏆 League Table", query: "Show me the league standings table" }
+      ]
+    : [
+        { label: "🗓️ See what's coming up", query: "What's coming up this week on the match schedule?" },
+        { label: "✨ Join the club — takes 30 seconds", query: "I want to join the crew!" },
+        { label: "👀 Just looking around first", query: "Tell me more about the club vibe and squad highlights!" }
+      ];
+
+  // Position state (draggable)
   const [position, setPosition] = useState(() => {
     try {
       const saved = localStorage.getItem('kickbot_btn_pos');
@@ -53,9 +78,7 @@ export default function AiAssistantWidget() {
           return parsed;
         }
       }
-    } catch (e) {
-      // fallback
-    }
+    } catch (e) {}
     return { 
       x: typeof window !== 'undefined' ? window.innerWidth - 210 : 300, 
       y: typeof window !== 'undefined' ? window.innerHeight - 80 : 500 
@@ -159,7 +182,7 @@ export default function AiAssistantWidget() {
     } catch (err) {}
   };
 
-  const handleSend = (textToSend) => {
+  const handleSend = async (textToSend) => {
     const query = textToSend || inputText;
     if (!query.trim()) return;
 
@@ -174,51 +197,113 @@ export default function AiAssistantWidget() {
     if (!textToSend) setInputText('');
     setIsTyping(true);
 
+    // Handle conversational onboarding steps if user is not logged in
+    if (!user && onboardingStep === 1) {
+      setUserName(query.trim());
+      setOnboardingStep(2);
+      setTimeout(() => {
+        setIsTyping(false);
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          sender: 'bot',
+          text: `Great to meet you, ${query.trim()}! 🎉 Are you looking to play on the pitch (Striker, Midfielder, Defender, Keeper) or join as a manager/fan?`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+      }, 500);
+      return;
+    }
+
+    if (!user && onboardingStep === 2) {
+      setOnboardingStep(3);
+      const namePart = userName ? `, ${userName}` : '';
+      setTimeout(() => {
+        setIsTyping(false);
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          sender: 'bot',
+          text: `Awesome${namePart}! You'll fit right in with the crew ⚽ We have custom FIFA stat cards and matchday lineup slots built for players like you. Let's get your profile set up — takes less than 30 seconds:`,
+          actionLink: { label: '✨ Create Player Account', path: '/register' },
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+      }, 500);
+      return;
+    }
+
+    // Call intelligent backend AI API endpoint
+    try {
+      const { data } = await api.post('/ai/ask', { question: query });
+      if (data?.replyText) {
+        setIsTyping(false);
+        setMessages(prev => [...prev, {
+          id: (Date.now() + 1).toString(),
+          sender: 'bot',
+          text: data.replyText,
+          actionLink: data.actionLink,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        }]);
+        return;
+      }
+    } catch (err) {
+      // Fallback if backend API call fails or server is restarting
+    }
+
+    // Local intelligence fallback
     setTimeout(() => {
       let replyText = "";
       let actionLink = null;
-
       const lower = query.toLowerCase();
 
-      if (lower.includes('fixture') || lower.includes('up') || lower.includes('match') || lower.includes('schedule') || lower.includes('game') || lower.includes('week')) {
+      if (lower.includes('join') || lower.includes('sign up') || lower.includes('register') || lower.includes('crew')) {
+        if (user) {
+          replyText = `You're already an official club member, ${user.name}! You can check session signups or profile anytime.`;
+          actionLink = { label: '📋 View Sessions', path: '/sessions' };
+        } else {
+          setOnboardingStep(1);
+          replyText = "Awesome! We'd love to have you on board! 🎉 First, what should I call you?";
+        }
+      } else if (lower.includes('fixture') || lower.includes('match') || lower.includes('schedule') || lower.includes('game')) {
         replyText = "We've got some absolute classic matches coming up! ⚽ Check out kick-off times, team match-ups, and pitch locations right here:";
         actionLink = { label: '🗓️ See Match Fixtures', path: '/fixtures' };
-      } else if (lower.includes('join') || lower.includes('sign up') || lower.includes('register') || lower.includes('crew') || lower.includes('member')) {
-        replyText = "We'd love to have you on board! 🙌 You can register as a solo player or sign up an entire team in just 2 minutes:";
-        actionLink = { label: '🙋 Join KFC Club', path: '/register' };
-      } else if (lower.includes('look') || lower.includes('squad') || lower.includes('around') || lower.includes('vibe') || lower.includes('player') || lower.includes('stat')) {
-        replyText = "Awesome! Take your time exploring our player squad cards, league leaderboards, and match photo highlights! ✨";
+      } else if (lower.includes('squad') || lower.includes('player') || lower.includes('rating') || lower.includes('fifa')) {
+        replyText = "Awesome! Check out our player FIFA performance stat cards, ratings, and squad rosters!";
         actionLink = { label: '👀 Explore Squad Cards', path: '/squad' };
-      } else if (lower.includes('session') || lower.includes('train')) {
-        replyText = "Our training sessions are high energy and super welcoming. Check out session dates and reserve your slot!";
-        actionLink = { label: '📋 View Sessions', path: '/sessions' };
-      } else if (lower.includes('hello') || lower.includes('hi') || lower.includes('hey')) {
-        replyText = "Hey there! Happy to have you here! Let me know what you'd like to check out first — matches, squad rosters, or joining!";
+      } else if (lower.includes('standing') || lower.includes('table') || lower.includes('leaderboard')) {
+        replyText = "Check out the League Standings page to see team points, goal differentials, and rankings.";
+        actionLink = { label: '🏆 View League Standings', path: '/standings' };
       } else {
-        replyText = "Ha, way outside my club duties 😄 — but ask me anything about KFC Football Club, match schedules, squad cards, or joining the crew!";
+        replyText = "Ha, way outside my club duties 😄 — but ask me anything about KFC Football Club, match schedules, squad cards, or training sessions!";
+        actionLink = { label: '⚽ Check Fixtures', path: '/fixtures' };
       }
 
-      const botMsg = {
+      setMessages(prev => [...prev, {
         id: (Date.now() + 1).toString(),
         sender: 'bot',
         text: replyText,
         actionLink,
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-
-      setMessages(prev => [...prev, botMsg]);
+      }]);
       setIsTyping(false);
     }, 600);
   };
 
-  // If user dismissed floating button completely
+  const handleActionClick = (actionLink) => {
+    if (!actionLink) return;
+    if (actionLink.action === 'openChat') {
+      setIsChatOpen(true);
+      setIsOpen(false);
+    } else if (actionLink.path) {
+      navigate(actionLink.path);
+      setIsOpen(false);
+    }
+  };
+
   if (isDismissed && !isOpen) {
     return (
       <div className="fixed bottom-3 right-3 z-40">
         <button
           onClick={handleRestore}
           className="flex items-center gap-1.5 rounded-full border border-cyan-500/20 bg-slate-950/80 px-3 py-1 text-[11px] font-semibold text-cyan-400 backdrop-blur-md hover:bg-slate-900 transition shadow-lg"
-          title="Restore KickBot Welcome Buddy"
+          title="Restore KickBot AI Assistant"
         >
           <FiRotateCcw className="h-3 w-3" />
           <span>Show KickBot</span>
@@ -235,7 +320,6 @@ export default function AiAssistantWidget() {
           style={{ left: `${position.x}px`, top: `${position.y}px` }}
           className="fixed z-50 flex items-center gap-1.5 select-none touch-none"
         >
-          {/* Draggable Main Button */}
           <div
             className="cursor-grab active:cursor-grabbing"
             onMouseDown={handleMouseDown}
@@ -248,7 +332,7 @@ export default function AiAssistantWidget() {
                 }
               }}
               className="group relative flex items-center gap-2 rounded-full bg-gradient-to-r from-cyan-500 via-blue-600 to-indigo-600 px-3.5 py-2.5 sm:px-4 sm:py-3 text-xs sm:text-sm font-semibold text-white shadow-xl shadow-cyan-500/30 transition-transform duration-200 hover:scale-105 active:scale-95"
-              aria-label="Open KickBot Welcome Buddy (Drag to reposition)"
+              aria-label="Open KickBot AI Assistant"
               title="Drag to reposition KickBot anywhere"
             >
               <span className="relative flex h-2.5 w-2.5 sm:h-3 sm:w-3">
@@ -256,17 +340,15 @@ export default function AiAssistantWidget() {
                 <span className="relative inline-flex rounded-full h-full w-full bg-cyan-200"></span>
               </span>
               <FiSmile className="h-4 w-4 sm:h-5 sm:w-5 transition-transform group-hover:rotate-12" />
-              <span className="hidden sm:inline">KickBot</span>
-              <FiMove className="h-3 w-3 sm:h-3.5 sm:w-3.5 opacity-60 group-hover:opacity-100 transition-opacity ml-0.5" />
+              <span className="hidden sm:inline">{user ? `Hi, ${user.name.split(' ')[0]}` : 'KickBot AI'}</span>
+              <FiZap className="h-3 w-3 sm:h-3.5 sm:w-3.5 text-yellow-300 ml-0.5 animate-pulse" />
             </button>
           </div>
 
-          {/* Close/Dismiss Button */}
           <button
             onClick={handleDismiss}
             className="flex h-7 w-7 items-center justify-center rounded-full bg-slate-900/90 text-slate-400 border border-white/10 hover:bg-rose-500 hover:text-white hover:border-rose-500 shadow-md transition-all duration-200 hover:scale-110 active:scale-95 shrink-0"
             title="Dismiss KickBot floating button"
-            aria-label="Dismiss Assistant button"
           >
             <FiX className="h-3.5 w-3.5" />
           </button>
@@ -284,12 +366,14 @@ export default function AiAssistantWidget() {
               </div>
               <div>
                 <div className="flex items-center gap-1.5">
-                  <h3 className="text-sm font-bold text-white">KickBot</h3>
-                  <span className="rounded-full bg-cyan-500/20 px-2 py-0.5 text-[10px] font-semibold text-cyan-300 border border-cyan-500/30">
-                    Welcome Buddy
+                  <h3 className="text-sm font-bold text-white">KickBot AI</h3>
+                  <span className="rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 px-2 py-0.5 text-[10px] font-bold text-cyan-300 border border-cyan-500/30">
+                    Live Intelligent
                   </span>
                 </div>
-                <p className="text-[11px] text-slate-400">KFC Football Club</p>
+                <p className="text-[11px] text-slate-400">
+                  {user ? `Logged in as ${user.name}` : 'KFC Football Club Intelligence'}
+                </p>
               </div>
             </div>
             <button
@@ -315,14 +399,11 @@ export default function AiAssistantWidget() {
                       : 'bg-slate-900/90 border border-white/10 text-slate-200 rounded-bl-none'
                   }`}
                 >
-                  <p className="leading-relaxed">{msg.text}</p>
+                  <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
 
                   {msg.actionLink && (
                     <button
-                      onClick={() => {
-                        navigate(msg.actionLink.path);
-                        setIsOpen(false);
-                      }}
+                      onClick={() => handleActionClick(msg.actionLink)}
                       className="mt-3 flex items-center gap-1.5 rounded-lg bg-cyan-500/20 px-3 py-1.5 text-xs font-semibold text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/30 transition"
                     >
                       <span>{msg.actionLink.label}</span>
@@ -339,7 +420,7 @@ export default function AiAssistantWidget() {
                 <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 border border-white/10 text-cyan-400">
                   <FiSmile className="h-4 w-4 animate-spin" />
                 </div>
-                <span className="italic">KickBot is typing...</span>
+                <span className="italic">KickBot is querying live data...</span>
               </div>
             )}
             <div ref={messagesEndRef} />
@@ -347,7 +428,7 @@ export default function AiAssistantWidget() {
 
           {/* Quick Prompts Chips */}
           <div className="px-3 py-2 border-t border-white/5 bg-slate-900/40 flex items-center gap-1.5 overflow-x-auto no-scrollbar">
-            {QUICK_PROMPTS.map((qp, idx) => (
+            {quickPrompts.map((qp, idx) => (
               <button
                 key={idx}
                 onClick={() => handleSend(qp.query)}

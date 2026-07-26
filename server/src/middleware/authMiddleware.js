@@ -41,4 +41,21 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
   next();
 };
 
-module.exports = { protect, admin, requireRole };
+const optionalAuth = async (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.split(' ')[1];
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      const user = await User.findById(decoded.id).select('-password').populate('team', 'name logo color status managerEmail');
+      if (user) {
+        req.user = user;
+      }
+    } catch (err) {
+      // Ignore token failure for optional auth
+    }
+  }
+  next();
+};
+
+module.exports = { protect, admin, requireRole, optionalAuth };

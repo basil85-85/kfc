@@ -3,7 +3,9 @@ import { ChatContext } from '../contexts/ChatContext';
 import { FiPhoneCall, FiPhoneOff, FiVideo } from 'react-icons/fi';
 
 export default function GlobalCallOverlay() {
-  const { incomingCall, outgoingCall, cancelCall, answerCall, setIsChatOpen } = useContext(ChatContext);
+  const chatCtx = useContext(ChatContext);
+  if (!chatCtx) return null;
+  const { incomingCall, outgoingCall, cancelCall, answerCall, setIsChatOpen } = chatCtx;
 
   if (!incomingCall && !outgoingCall) return null;
 

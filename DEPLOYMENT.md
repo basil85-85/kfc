@@ -89,6 +89,6 @@ Go back to your **Render.com** Dashboard for `kfc-backend`:
 ---
 
 ## 🎉 YOUR APP IS LIVE!
-- **Frontend URL**: `https://kfc-club.vercel.app`
-- **Backend API URL**: `https://kfc-backend.onrender.com/api`
+- **Frontend URL**: `https://kfc-dun.vercel.app`
+- **Backend API URL**: `https://kfc-backend-6m2z.onrender.com/api`
 - Real-time Socket.io chat, video calls, line-ups, and notifications will work seamlessly online!

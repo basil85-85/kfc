@@ -2,28 +2,25 @@ import { useState, useRef, useEffect } from 'react';
 import { JitsiMeeting } from '@jitsi/react-sdk';
 import {
   FiVideo,
-  FiVideoOff,
-  FiMic,
-  FiMicOff,
   FiPhoneOff,
   FiPhoneCall,
   FiMinimize2,
   FiMaximize2,
-  FiRadio,
   FiUsers,
 } from 'react-icons/fi';
 
 const VideoConferencePanel = ({ activeRoom, user }) => {
   const [isMinimized, setIsMinimized] = useState(false);
-  const [isCallActive, setIsCallActive] = useState(true);
+  const [isCallActive, setIsCallActive] = useState(false); // Default: Manual opt-in required!
   const jitsiApiRef = useRef(null);
 
   const roomSlug = activeRoom?.videoRoomName || `kfc-room-${activeRoom?._id}`;
   const displayName = user?.name || 'KFC Member';
 
-  // Reset call active state when room changes to trigger auto-join
+  // Ensure call is inactive when room changes (no auto-join)
   useEffect(() => {
-    setIsCallActive(true);
+    setIsCallActive(false);
+    setIsMinimized(false);
   }, [activeRoom?._id]);
 
   const handleApiReady = (apiObj) => {
@@ -46,34 +43,37 @@ const VideoConferencePanel = ({ activeRoom, user }) => {
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-800/60 bg-slate-950/60">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
-            <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${isCallActive ? 'bg-emerald-400 opacity-75' : 'bg-slate-500'}`} />
+            <span className={`absolute inline-flex h-full w-full rounded-full ${isCallActive ? 'animate-ping bg-emerald-400 opacity-75' : 'bg-slate-600'}`} />
             <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${isCallActive ? 'bg-emerald-500' : 'bg-slate-500'}`} />
           </span>
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
-            <FiVideo className="text-cyan-400" />
-            {isCallActive ? 'Live Video & Audio' : 'Conference Disconnected'}
+            <FiVideo className={isCallActive ? 'text-emerald-400 animate-pulse' : 'text-slate-400'} />
+            {isCallActive ? 'Live Video & Audio Call' : 'Video Conference (Optional)'}
           </span>
         </div>
 
         <div className="flex items-center gap-1.5">
-          {/* Leave / Rejoin Call Toggle */}
+          {/* Manual Start / Join / Leave Call Toggle */}
           {isCallActive ? (
             <button
               onClick={() => setIsCallActive(false)}
-              className="flex items-center gap-1 rounded-lg bg-rose-500/10 border border-rose-500/30 px-2 py-1 text-[10px] font-bold text-rose-400 hover:bg-rose-500/20 transition"
+              className="flex items-center gap-1.5 rounded-lg bg-rose-500/15 border border-rose-500/40 px-2.5 py-1 text-[10px] font-bold text-rose-300 hover:bg-rose-500/30 transition shadow-sm"
               title="Leave video/audio call (stay in text chat)"
             >
               <FiPhoneOff size={12} />
-              <span>Leave</span>
+              <span>Leave Call</span>
             </button>
           ) : (
             <button
-              onClick={() => setIsCallActive(true)}
-              className="flex items-center gap-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-2 py-1 text-[10px] font-bold text-emerald-400 hover:bg-emerald-500/20 transition"
-              title="Rejoin video/audio conference"
+              onClick={() => {
+                setIsCallActive(true);
+                setIsMinimized(false);
+              }}
+              className="flex items-center gap-1.5 rounded-lg bg-emerald-500/20 border border-emerald-500/40 px-3 py-1 text-[10px] font-extrabold text-emerald-300 hover:bg-emerald-500/30 transition shadow-glow-cyan"
+              title="Start or Join Live Video & Audio Call"
             >
               <FiPhoneCall size={12} />
-              <span>Rejoin</span>
+              <span>Start Call</span>
             </button>
           )}
 
@@ -119,7 +119,7 @@ const VideoConferencePanel = ({ activeRoom, user }) => {
             configOverwrite={{
               startWithAudioMuted: false,
               startWithVideoMuted: false,
-              prejoinPageEnabled: false, // Auto-join directly without prejoin page prompt!
+              prejoinPageEnabled: false,
               disableDeepLinking: true,
               disableThirdPartyRequests: true,
               disableAnalytics: true,

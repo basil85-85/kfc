@@ -19,7 +19,6 @@ import {
   FiUser,
   FiPlus,
   FiMic,
-  FiCheck,
   FiChevronDown,
   FiChevronUp,
   FiSearch,
@@ -240,10 +239,49 @@ export default function ChatDrawer() {
     return room.name;
   };
 
+  // Helper to get member for DM tab avatar
+  const getDmMember = (room) => {
+    if (room.type === 'direct' && Array.isArray(room.members)) {
+      return room.members.find((m) => String(m._id || m) !== String(user?._id));
+    }
+    return null;
+  };
+
   const formatTime = (dateStr) => {
     if (!dateStr) return '';
     const date = new Date(dateStr);
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  };
+
+  // Render User Profile Avatar Badge (Photo Image or Initial Circle)
+  const renderAvatar = (msgSender, isOwn = false, size = 'h-7 w-7') => {
+    const photo = msgSender?.photoURL || msgSender?.avatar;
+    const name = msgSender?.name || msgSender?.senderName || (isOwn ? user?.name : 'User') || 'U';
+    const firstLetter = name.charAt(0).toUpperCase();
+
+    if (photo) {
+      return (
+        <img
+          src={photo}
+          alt={name}
+          className={`${size} rounded-full object-cover border ${isOwn ? 'border-cyan-400' : 'border-emerald-500/40'} shadow-sm shrink-0`}
+        />
+      );
+    }
+
+    return (
+      <div
+        className={`${size} rounded-full flex items-center justify-center font-extrabold text-[11px] uppercase shadow-md border shrink-0 ${
+          isOwn
+            ? 'bg-gradient-to-tr from-cyan-500 to-teal-400 text-slate-950 border-cyan-300'
+            : msgSender?.role === 'admin'
+            ? 'bg-gradient-to-tr from-amber-500 to-yellow-400 text-slate-950 border-amber-300'
+            : 'bg-gradient-to-tr from-emerald-700 to-teal-800 text-emerald-100 border-emerald-500/40'
+        }`}
+      >
+        {firstLetter}
+      </div>
+    );
   };
 
   if (!isChatOpen) return null;
@@ -252,7 +290,7 @@ export default function ChatDrawer() {
     <div className="fixed inset-0 z-50 overflow-hidden bg-slate-950/60 backdrop-blur-sm transition-opacity">
       <div className="absolute inset-0" onClick={() => setIsChatOpen(false)} />
 
-      <div className="fixed inset-y-0 right-0 flex max-w-full pl-6 sm:pl-10">
+      <div className="fixed inset-y-0 right-0 flex max-w-full pl-4 sm:pl-10">
         <div className="w-screen max-w-md border-l border-slate-800 bg-slate-950 shadow-2xl flex flex-col font-space">
           
           {/* HEADER */}
@@ -357,6 +395,7 @@ export default function ChatDrawer() {
                   {rooms.map((room) => {
                     const isActive = room._id === activeRoomId;
                     const displayName = getRoomDisplayName(room);
+                    const dmMember = getDmMember(room);
                     return (
                       <button
                         key={room._id}
@@ -364,13 +403,13 @@ export default function ChatDrawer() {
                           setActiveRoomId(room._id);
                           markRoomRead(room._id);
                         }}
-                        className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition border ${
+                        className={`flex items-center gap-2 rounded-xl px-2.5 py-1.5 text-xs font-semibold whitespace-nowrap transition border ${
                           isActive
-                            ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/30 shadow-sm font-bold'
+                            ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/40 shadow-md font-bold'
                             : 'bg-slate-900/60 text-slate-400 border-slate-800 hover:bg-slate-800 hover:text-slate-200'
                         }`}
                       >
-                        {getRoomIcon(room.type)}
+                        {dmMember ? renderAvatar(dmMember, false, 'h-5 w-5') : getRoomIcon(room.type)}
                         <span>{displayName}</span>
                         {room.unreadCount > 0 && (
                           <span className="flex h-4 min-w-[16px] items-center justify-center rounded-full bg-cyan-500 px-1 text-[9px] font-bold text-slate-950">
@@ -385,7 +424,7 @@ export default function ChatDrawer() {
                 {/* New DM Button */}
                 <button
                   onClick={() => setIsDmModalOpen(true)}
-                  className="flex items-center gap-1 rounded-lg bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition shrink-0"
+                  className="flex items-center gap-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 px-2.5 py-1.5 text-xs font-bold text-emerald-400 hover:bg-emerald-500/20 transition shrink-0"
                   title="Start a 1-on-1 Direct Message"
                 >
                   <FiPlus size={13} />
@@ -397,7 +436,11 @@ export default function ChatDrawer() {
               {activeRoom && (
                 <div className="flex items-center justify-between border-b border-slate-800/80 bg-slate-900/20 px-4 py-2">
                   <div className="flex items-center gap-2 text-xs text-slate-300 font-semibold">
-                    {getRoomIcon(activeRoom.type)}
+                    {getDmMember(activeRoom) ? (
+                      renderAvatar(getDmMember(activeRoom), false, 'h-5 w-5')
+                    ) : (
+                      getRoomIcon(activeRoom.type)
+                    )}
                     <span>{getRoomDisplayName(activeRoom)}</span>
                     <span className="rounded-full bg-slate-800 px-2 py-0.5 text-[9px] text-slate-400 font-bold uppercase tracking-wider">
                       {activeRoom.type === 'direct' ? 'Direct' : activeRoom.type}
@@ -421,7 +464,7 @@ export default function ChatDrawer() {
               {activeRoom && <VideoConferencePanel activeRoom={activeRoom} user={user} />}
 
               {/* MESSAGES THREAD CONTAINER */}
-              <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-slate-950/50">
+              <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-slate-950/50">
                 {filteredMessages.length === 0 ? (
                   <div className="flex h-full flex-col items-center justify-center text-center text-slate-500 p-6">
                     <FiMessageSquare size={32} className="mb-2 text-slate-600" />
@@ -432,7 +475,7 @@ export default function ChatDrawer() {
                   filteredMessages.map((msg, index) => {
                     const isOwn = msg.sender?._id === user?._id || msg.sender === user?._id;
 
-                    // Consecutive Message Grouping: check if previous message was from the same sender
+                    // Consecutive Message Grouping
                     const prevMsg = index > 0 ? filteredMessages[index - 1] : null;
                     const prevSenderId = prevMsg ? (prevMsg.sender?._id || prevMsg.sender) : null;
                     const currentSenderId = msg.sender?._id || msg.sender;
@@ -441,30 +484,40 @@ export default function ChatDrawer() {
                     return (
                       <div
                         key={msg._id}
-                        className={`flex flex-col group ${isOwn ? 'items-end' : 'items-start'} ${isFirstInGroup ? 'mt-3' : 'mt-0.5'}`}
+                        className={`flex items-end gap-2.5 ${isOwn ? 'justify-end' : 'justify-start'} ${
+                          isFirstInGroup ? 'mt-3' : 'mt-1'
+                        }`}
                       >
-                        {/* Sender Info Header (Only rendered on the first message of a consecutive group) */}
-                        {!isOwn && isFirstInGroup && (
-                          <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-slate-400 font-semibold">
-                            {msg.sender?.role === 'admin' ? (
-                              <span className="flex items-center gap-0.5 text-amber-400 font-bold">
-                                <FiShield size={10} /> Admin
-                              </span>
-                            ) : (
-                              <span className="flex items-center gap-0.5 text-slate-300">
-                                <FiUser size={10} /> {msg.senderName}
-                              </span>
-                            )}
-                            {msg.senderTeam && <span className="text-slate-500">• {msg.senderTeam}</span>}
+                        {/* LEFT AVATAR IMAGE (For Received Messages) */}
+                        {!isOwn && (
+                          <div className="shrink-0 pb-1">
+                            {renderAvatar(msg.sender || { name: msg.senderName }, false, 'h-7 w-7')}
                           </div>
                         )}
 
-                        {/* Message Bubble */}
-                        <div className="relative max-w-[85%]">
+                        {/* MESSAGE CONTENT COLUMN */}
+                        <div className={`flex flex-col max-w-[78%] ${isOwn ? 'items-end' : 'items-start'}`}>
+                          {/* Sender Info Header (Only rendered on the first message of a consecutive group) */}
+                          {!isOwn && isFirstInGroup && (
+                            <div className="flex items-center gap-1.5 mb-1 px-1 text-[10px] text-slate-400 font-semibold">
+                              {msg.sender?.role === 'admin' ? (
+                                <span className="flex items-center gap-0.5 text-amber-400 font-bold">
+                                  <FiShield size={10} /> Admin
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-0.5 text-slate-300">
+                                  {msg.senderName}
+                                </span>
+                              )}
+                              {msg.senderTeam && <span className="text-slate-500">• {msg.senderTeam}</span>}
+                            </div>
+                          )}
+
+                          {/* Message Bubble */}
                           <div
                             className={`rounded-2xl px-3.5 py-2 text-xs leading-relaxed break-words shadow-md ${
                               isOwn
-                                ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 font-medium rounded-br-none'
+                                ? 'bg-gradient-to-r from-cyan-500 to-teal-500 text-slate-950 font-semibold rounded-br-none'
                                 : 'bg-slate-900 border border-slate-800 text-slate-100 rounded-bl-none'
                             }`}
                           >
@@ -505,6 +558,13 @@ export default function ChatDrawer() {
                             )}
                           </div>
                         </div>
+
+                        {/* RIGHT AVATAR IMAGE (For Own Messages) */}
+                        {isOwn && (
+                          <div className="shrink-0 pb-1">
+                            {renderAvatar(user, true, 'h-7 w-7')}
+                          </div>
+                        )}
                       </div>
                     );
                   })

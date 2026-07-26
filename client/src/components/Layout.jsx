@@ -5,6 +5,7 @@ import { getTeamTintStyle } from '../utils/teamTheme';
 import Navbar from './Navbar';
 import Footer from './Footer';
 import ChatDrawer from './ChatDrawer';
+import AiAssistantWidget from './AiAssistantWidget';
 import ErrorBoundary from './ErrorBoundary';
 import { FiHome, FiUsers, FiCalendar, FiGrid, FiUser } from 'react-icons/fi';
 
@@ -46,6 +47,9 @@ const Layout = () => {
 
       {/* Global Real-Time Chat Drawer */}
       <ChatDrawer />
+
+      {/* KickBot AI Assistant Floating Widget */}
+      <AiAssistantWidget />
 
       {/* Mobile Fixed Bottom Nav */}
       <nav

@@ -5,6 +5,7 @@ import ChatRoomManager from './ChatRoomManager';
 import VideoConferencePanel from './VideoConferencePanel';
 import NewDirectMessageModal from './NewDirectMessageModal';
 import AudioPlayerBubble from './AudioPlayerBubble';
+import UnauthenticatedPromptCard from './UnauthenticatedPromptCard';
 import {
   FiX,
   FiSend,
@@ -229,7 +230,7 @@ const ChatDrawer = () => {
                   KFC Real-Time Chat
                 </h3>
                 <p className="text-[10px] font-semibold text-slate-400">
-                  {user?.role === 'admin' ? 'Admin Access' : user?.team?.name || 'Club Member'}
+                  {user ? (user.role === 'admin' ? 'Admin Access' : user.team?.name || 'Club Member') : 'Guest'}
                 </p>
               </div>
             </div>
@@ -242,7 +243,17 @@ const ChatDrawer = () => {
             </button>
           </div>
 
-          {/* ROOM MANAGEMENT TOGGLE (Admin or Manager) */}
+          {!user ? (
+            <UnauthenticatedPromptCard
+              compact
+              onClose={() => setIsChatOpen(false)}
+              title="Log in to join the conversation"
+              subtitle="Chat with your teammates, join match rooms, and stay connected with KFC."
+              icon="chat"
+            />
+          ) : (
+            <>
+              {/* ROOM MANAGEMENT TOGGLE (Admin or Manager) */}
           {(user?.role === 'admin' || user?.role === 'manager') && (
             <div>
               <button
@@ -502,6 +513,8 @@ const ChatDrawer = () => {
             <div className="border-t border-slate-800 bg-slate-900/90 p-3 text-center text-xs text-slate-500">
               Only Administrators can post messages in this room.
             </div>
+          )}
+            </>
           )}
         </div>
       </div>

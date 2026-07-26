@@ -208,10 +208,29 @@ const initSocketServer = (io) => {
           { roomId, readBy: { $ne: user._id } },
           { $addToSet: { readBy: user._id } }
         );
-        socket.emit('messages_marked_read', { roomId });
+        io.to(roomId).emit('messages_marked_read', { roomId, userId: user._id });
       } catch (err) {
         console.error('Error marking messages read:', err);
       }
+    });
+
+    // Real-Time Video & Audio Call Handlers
+    socket.on('start_call', ({ roomId, isVideo }) => {
+      socket.to(roomId).emit('incoming_call', {
+        roomId,
+        callerId: user._id,
+        callerName: user.name,
+        callerPhoto: user.photoURL || user.avatar || '',
+        isVideo: isVideo !== false,
+      });
+    });
+
+    socket.on('answer_call', ({ roomId }) => {
+      io.to(roomId).emit('call_answered', { roomId, answeredBy: user._id, answeredName: user.name });
+    });
+
+    socket.on('end_call', ({ roomId }) => {
+      io.to(roomId).emit('call_ended', { roomId, endedBy: user._id });
     });
 
     // Admin Delete Message (Moderation)

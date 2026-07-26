@@ -25,7 +25,7 @@ import {
   FiSmile,
   FiVolume2,
   FiVolumeX,
-  FiCheckCircle,
+  FiCheck,
   FiArrowLeft,
   FiPhone,
   FiVideo,
@@ -53,8 +53,10 @@ export default function ChatDrawer() {
     deleteMessage,
     markRoomRead,
     incomingCall,
-    setIncomingCall,
-    triggerCallNotification
+    outgoingCall,
+    triggerCallNotification,
+    cancelCall,
+    answerCall
   } = useContext(ChatContext);
 
   const [inputContent, setInputContent] = useState('');
@@ -301,6 +303,26 @@ export default function ChatDrawer() {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   };
 
+  // WhatsApp-style Ticks: Single Gray Tick (Sent), Double Cyan Ticks (Seen/Read)
+  const renderMessageTicks = (msg) => {
+    const isSeen = Array.isArray(msg.readBy) && msg.readBy.length > 1;
+
+    if (isSeen) {
+      return (
+        <span className="text-cyan-400 flex items-center -space-x-1 font-bold" title="Seen by recipient">
+          <FiCheck size={11} className="stroke-[3]" />
+          <FiCheck size={11} className="stroke-[3]" />
+        </span>
+      );
+    }
+
+    return (
+      <span className="text-slate-400 flex items-center" title="Sent">
+        <FiCheck size={11} className="stroke-[2.5]" />
+      </span>
+    );
+  };
+
   // Render User Profile Avatar Badge (Photo Image or Initial Circle)
   const renderAvatar = (msgSender, isOwn = false, size = 'h-9 w-9') => {
     const photo = msgSender?.photoURL || msgSender?.avatar;
@@ -339,7 +361,31 @@ export default function ChatDrawer() {
       {/* Background Overlay Click to Close */}
       <div className="absolute inset-0" onClick={() => setIsChatOpen(false)} />
 
-      {/* INCOMING CALL NOTIFICATION MODAL BANNER */}
+      {/* OUTGOING CALL SCREEN BANNER (Caller State) */}
+      {outgoingCall && (
+        <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-md rounded-2xl border-2 border-cyan-500/60 bg-[#041724] p-4 shadow-2xl animate-pulse">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-cyan-500 text-slate-950 animate-bounce">
+                <FiPhoneCall size={20} />
+              </div>
+              <div>
+                <h4 className="font-bold text-xs text-white">CALLING {outgoingCall.contactName?.toUpperCase()}...</h4>
+                <p className="text-[10px] text-cyan-300 font-medium">Ringing recipient's device...</p>
+              </div>
+            </div>
+            <button
+              onClick={() => cancelCall(outgoingCall.roomId)}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-500/40 bg-rose-950/70 px-3 py-2 text-xs font-bold text-rose-300 hover:bg-rose-900 transition shadow-md"
+            >
+              <FiPhoneOff size={15} />
+              <span>END CALL</span>
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* INCOMING CALL NOTIFICATION MODAL BANNER (Recipient State) */}
       {incomingCall && (
         <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 w-full max-w-md rounded-2xl border-2 border-emerald-500/60 bg-[#041d13] p-4 shadow-2xl animate-bounce">
           <div className="flex items-center justify-between">
@@ -349,22 +395,19 @@ export default function ChatDrawer() {
               </div>
               <div>
                 <h4 className="font-bold text-xs text-white">INCOMING CALL FROM {incomingCall.callerName?.toUpperCase()}</h4>
-                <p className="text-[10px] text-emerald-400">Click Join to connect with audio & video</p>
+                <p className="text-[10px] text-emerald-400">Click Answer to connect live</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setIncomingCall(null)}
+                onClick={() => cancelCall(incomingCall.roomId)}
                 className="rounded-xl border border-rose-500/30 bg-rose-950/50 p-2 text-rose-300 hover:bg-rose-900 transition"
               >
                 <FiPhoneOff size={16} />
               </button>
               <button
-                onClick={() => {
-                  setIncomingCall(null);
-                  if (activeRoom) triggerCallNotification(activeRoom._id, true);
-                }}
-                className="flex items-center gap-1 rounded-xl bg-emerald-500 px-3 py-2 text-xs font-bold text-slate-950 hover:bg-emerald-400 transition"
+                onClick={() => answerCall(incomingCall.roomId)}
+                className="flex items-center gap-1.5 rounded-xl bg-emerald-500 px-3.5 py-2 text-xs font-extrabold text-slate-950 hover:bg-emerald-400 transition"
               >
                 <FiPhoneCall size={14} />
                 <span>ANSWER</span>
@@ -593,18 +636,18 @@ export default function ChatDrawer() {
 
                 {/* Header Action Toolbar Icons */}
                 <div className="flex items-center gap-2">
-                  {/* Audio Call */}
+                  {/* Audio Call Trigger */}
                   <button
-                    onClick={() => triggerCallNotification(activeRoom._id, false)}
+                    onClick={() => triggerCallNotification(activeRoom._id, false, getRoomDisplayName(activeRoom))}
                     className="rounded-xl border border-emerald-900/40 bg-emerald-950/40 p-2.5 text-emerald-400 hover:bg-emerald-900/60 hover:text-white transition"
                     title="Start Audio Call"
                   >
                     <FiPhone size={15} />
                   </button>
 
-                  {/* Video Call */}
+                  {/* Video Call Trigger */}
                   <button
-                    onClick={() => triggerCallNotification(activeRoom._id, true)}
+                    onClick={() => triggerCallNotification(activeRoom._id, true, getRoomDisplayName(activeRoom))}
                     className="rounded-xl border border-emerald-900/40 bg-emerald-950/40 p-2.5 text-emerald-400 hover:bg-emerald-900/60 hover:text-white transition"
                     title="Start Video Call"
                   >
@@ -748,18 +791,15 @@ export default function ChatDrawer() {
                             )}
                           </div>
 
-                          {/* Timestamp & Status Ticks */}
+                          {/* Timestamp & Status Ticks (Single Gray Tick vs Double Cyan Ticks) */}
                           <div
                             className={`flex items-center gap-1.5 mt-1 px-1 text-[9px] text-slate-400 ${
                               isOwn ? 'justify-end' : 'justify-start'
                             }`}
                           >
                             <span>{formatTime(msg.sentAt)}</span>
-                            {isOwn && (
-                              <span className="text-cyan-400 flex items-center" title="Delivered & Seen">
-                                <FiCheckCircle size={11} />
-                              </span>
-                            )}
+                            {isOwn && renderMessageTicks(msg)}
+
                             {user?.role === 'admin' && (
                               <button
                                 onClick={() => deleteMessage(msg._id, activeRoom._id)}

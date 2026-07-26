@@ -6,8 +6,8 @@ import api from '../services/api';
 
 export const ChatContext = createContext();
 
-// Web Audio API Synthesizer for instant notification chime
-const playNotificationChime = () => {
+// Web Audio API Synthesizer for instant notification chime & ringtone
+const playNotificationChime = (isRingtone = false) => {
   try {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     if (!AudioContext) return;
@@ -15,18 +15,27 @@ const playNotificationChime = () => {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5 note
-    osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5 note
-
-    gain.gain.setValueAtTime(0.2, ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
-
-    osc.connect(gain);
-    gain.connect(ctx.destination);
-
-    osc.start();
-    osc.stop(ctx.currentTime + 0.35);
+    if (isRingtone) {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(440, ctx.currentTime); // A4
+      osc.frequency.setValueAtTime(880, ctx.currentTime + 0.2); // A5
+      gain.gain.setValueAtTime(0.3, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.8);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.8);
+    } else {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime); // D5
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.15); // A5
+      gain.gain.setValueAtTime(0.2, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.35);
+    }
   } catch {
     // Ignore audio autoplay restrictions
   }
@@ -44,7 +53,11 @@ export const ChatProvider = ({ children }) => {
   const [typingUsers, setTypingUsers] = useState({}); // { [roomId]: Array<{_id, name}> }
   const [isChatOpen, setIsChatOpen] = useState(false);
   const [loadingRooms, setLoadingRooms] = useState(false);
-  const [incomingCall, setIncomingCall] = useState(null); // { callerName, roomName, isVideo }
+  
+  // Call States
+  const [incomingCall, setIncomingCall] = useState(null); // { roomId, callerId, callerName, isVideo }
+  const [outgoingCall, setOutgoingCall] = useState(null); // { roomId, contactName, isVideo }
+  const [activeCallRoomId, setActiveCallRoomId] = useState(null);
 
   const activeRoomIdRef = useRef(activeRoomId);
   activeRoomIdRef.current = activeRoomId;
@@ -172,7 +185,6 @@ export const ChatProvider = ({ children }) => {
     newSocket.on('new_message', (msg) => {
       const rId = msg.roomId;
 
-      // Update message list
       setMessages((prev) => {
         const existing = prev[rId] || [];
         if (existing.some((m) => m._id === msg._id)) return prev;
@@ -202,11 +214,27 @@ export const ChatProvider = ({ children }) => {
         setTotalUnread((prev) => prev + 1);
       }
 
-      // Incoming message chime & toast notification
+      // Play chime & show toast if incoming from another member
       if (msg.sender?._id !== user._id && msg.sender !== user._id) {
-        playNotificationChime();
-        toast?.addToast(`💬 ${msg.senderName || ' Teammate'}: ${msg.content || 'Voice Note'}`, 'info');
+        playNotificationChime(false);
+        toast?.addToast(`💬 ${msg.senderName || 'Teammate'}: ${msg.content || 'Voice Note'}`, 'info');
       }
+    });
+
+    // Real-time message read update (Double cyan ticks trigger)
+    newSocket.on('messages_marked_read', ({ roomId, userId: readerId }) => {
+      setMessages((prev) => {
+        const roomMsgs = prev[roomId];
+        if (!roomMsgs) return prev;
+        const updated = roomMsgs.map((m) => {
+          const currentReadBy = Array.isArray(m.readBy) ? m.readBy : [];
+          if (!currentReadBy.some((id) => String(id) === String(readerId))) {
+            return { ...m, readBy: [...currentReadBy, readerId] };
+          }
+          return m;
+        });
+        return { ...prev, [roomId]: updated };
+      });
     });
 
     newSocket.on('user_typing', ({ roomId, user: typingUser }) => {
@@ -228,12 +256,28 @@ export const ChatProvider = ({ children }) => {
       });
     });
 
-    // Incoming Call socket event listener
+    // Incoming Call listener
     newSocket.on('incoming_call', (data) => {
       if (data.callerId !== user._id) {
-        playNotificationChime();
+        playNotificationChime(true);
         setIncomingCall(data);
       }
+    });
+
+    // Call Answered listener
+    newSocket.on('call_answered', ({ roomId }) => {
+      setOutgoingCall(null);
+      setIncomingCall(null);
+      setActiveCallRoomId(roomId);
+      toast?.addToast('📞 Call connected! Live conference ready.', 'success');
+    });
+
+    // Call Ended listener
+    newSocket.on('call_ended', () => {
+      setOutgoingCall(null);
+      setIncomingCall(null);
+      setActiveCallRoomId(null);
+      toast?.addToast('Call ended', 'info');
     });
 
     setSocket(newSocket);
@@ -252,7 +296,6 @@ export const ChatProvider = ({ children }) => {
     }
   }, [activeRoomId, loadRoomMessages, markRoomRead]);
 
-  // Send message helper
   const sendMessage = async (roomId, content, messageType = 'text', audioUrl = '', audioDuration = 0) => {
     if (!socket || !socket.connected) {
       throw new Error('Socket not connected');
@@ -273,11 +316,32 @@ export const ChatProvider = ({ children }) => {
     });
   };
 
-  const triggerCallNotification = (roomId, isVideo = true) => {
+  const triggerCallNotification = (roomId, isVideo = true, contactName = 'Contact') => {
+    setOutgoingCall({ roomId, contactName, isVideo });
     if (socket && socket.connected) {
-      socket.emit('start_call', { roomId, callerId: user?._id, callerName: user?.name, isVideo });
+      socket.emit('start_call', { roomId, isVideo });
     }
   };
+
+  const cancelCall = (roomId) => {
+    setOutgoingCall(null);
+    setIncomingCall(null);
+    if (socket && socket.connected) {
+      socket.emit('end_call', { roomId });
+    }
+  };
+
+  const answerCall = (roomId) => {
+    setIncomingCall(null);
+    setActiveCallRoomId(roomId);
+    if (socket && socket.connected) {
+      socket.emit('answer_call', { roomId });
+    }
+  };
+
+  const toggleChat = useCallback(() => {
+    setIsChatOpen((prev) => !prev);
+  }, []);
 
   const startTyping = (roomId) => {
     if (socket && socket.connected) {
@@ -304,10 +368,6 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
-  const toggleChat = useCallback(() => {
-    setIsChatOpen((prev) => !prev);
-  }, []);
-
   return (
     <ChatContext.Provider
       value={{
@@ -330,7 +390,13 @@ export const ChatProvider = ({ children }) => {
         fetchRooms,
         incomingCall,
         setIncomingCall,
-        triggerCallNotification
+        outgoingCall,
+        setOutgoingCall,
+        activeCallRoomId,
+        setActiveCallRoomId,
+        triggerCallNotification,
+        cancelCall,
+        answerCall
       }}
     >
       {children}

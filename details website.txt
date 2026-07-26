@@ -1,0 +1,84 @@
+KFC Website Details
+
+Project overview:
+- Full-stack football club management application.
+- Frontend: React + Vite, client app in client/.
+- Backend: Express + MongoDB, server app in server/.
+- Authentication with user and admin roles.
+- Manager and admin features for team, fixture, lineup, payments, sessions, gallery, and notifications.
+
+Frontend structure:
+- client/src/App.jsx: main route definitions.
+- client/src/components: reusable UI components like Navbar, Layout, FifaCard, LineupBuilder, FixtureDetailModal, PlayerCard, PlayerDetailModal, Loading, ToastContainer.
+- client/src/contexts: auth, notification, theme contexts.
+- client/src/pages: all page screens for public, dashboard, admin, login/register, lineup planner, fixtures, teams, players, payments, notifications, gallery.
+- client/src/routes: ProtectedRoute (authenticated users) and AdminRoute (admin-only pages).
+- client/src/services/api.js: Axios setup, auth token header injection, 401 handling.
+
+Key frontend pages:
+- HomePage: landing and overview.
+- SquadPage: player roster with matchday/manager info.
+- FixturesPage: fixture list.
+- FixtureDetailPage: fixture details and lineup display.
+- StandingsPage: league table.
+- LeaderboardPage: player rankings.
+- TeamRosterPage: team roster details.
+- GalleryPage: photo gallery.
+- LoginPage/RegisterPage/RegisterTeamPage/RegisterTeamSignupPage: authentication and registration flows.
+- DashboardPage: user/manager dashboard.
+- ProfilePage: user profile.
+- MyPaymentsPage: player payment status.
+- SessionsPage: session registration and attendance.
+- NotificationsPage: user notifications.
+- LineupPlannerPage: manager lineup and formation builder.
+- AdminDashboardPage/AdminFixturesPage/AdminLineupPage/AdminPaymentsPage/AdminPlayersPage/AdminTeamsPage/AdminLeaguesPage/AdminNotificationsPage/AdminGalleryPage/AdminSessionsPage/AdminThemePage/AdminPendingTeamsPage: admin management screens.
+
+Backend structure:
+- server/src/index.js: Express server setup, routes, middleware, database connect.
+- server/src/config/db.js: MongoDB connection.
+- server/src/routes: route definitions for auth, users, teams, leagues, fixtures, lineups, payments, notifications, gallery, theme, sessions, ratings.
+- server/src/controllers: business logic for each resource.
+- server/src/models: Mongoose schemas for User, Team, League, Fixture, Lineup, Payment, Notification, Gallery, Theme, Session, Rating.
+- server/src/middleware: auth middleware, error handler, rate limiter.
+- server/src/utils: helper utilities including match format config and admin seeding.
+
+API endpoints:
+- /api/auth: register, register-team, login, /me.
+- /api/users: get players, deactivate user.
+- /api/teams: get teams, team register, my team, pending requests, approve/reject, get roster, admin create/delete.
+- /api/leagues: get leagues, create league, standings, finalize phase.
+- /api/fixtures: get fixtures, create fixture, generate fixtures, advance knockout, delete fixture.
+- /api/lineups: get lineups by fixture, save lineup.
+- /api/payments: get my payments, get all payments, create payment record, order, verify payment, mark paid, bulk delete.
+- /api/notifications: get notifications, push notification, mark read.
+- /api/gallery: get gallery, create album, upload photos, like photo.
+- /api/theme: get theme data.
+- /api/sessions: get sessions, create session, register session, mark attendance.
+- /api/ratings: get ratings, rate player.
+
+Notable features:
+- Match format support: 5s/7s/11s with formation configuration.
+- Tactical lineup builder with drag-and-drop and save.
+- Admin fixture generation and league scheduling.
+- Team registration and approval workflow.
+- Payment/invoice creation and management.
+- Gallery with albums and photo likes.
+- Notification push and user alerts.
+
+Known bug / issue areas:
+- 5s lineup validation: lineup planner must use the fixture's 5s format to require exactly 5 starters.
+- Fixture team/league relation: team league reference may be missing or undefined, causing dropdown issues in admin fixture forms.
+- Admin payments player select: player dropdown should show all players and allow team filtering correctly.
+- Lineup save formatting: selected fixture format must sync before saving the lineup.
+
+Useful files to inspect:
+- client/src/pages/LineupPlannerPage.jsx
+- client/src/pages/AdminPaymentsPage.jsx
+- client/src/pages/AdminFixturesPage.jsx
+- server/src/controllers/lineupController.js
+- server/src/controllers/fixtureController.js
+- server/src/routes/fixtureRoutes.js
+- server/src/routes/lineupRoutes.js
+- server/src/utils/matchFormatConfig.js
+
+This file contains the current website architecture, main pages, backend API layout, and the main bug areas identified in the app.

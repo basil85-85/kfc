@@ -8,6 +8,7 @@ import ChatDrawer from './ChatDrawer';
 import AiAssistantWidget from './AiAssistantWidget';
 import ErrorBoundary from './ErrorBoundary';
 import GlobalCallOverlay from './GlobalCallOverlay';
+import { FiHome, FiUsers, FiCalendar, FiGrid, FiUser } from 'react-icons/fi';
 
 const Layout = () => {
   const { user } = useContext(AuthContext);

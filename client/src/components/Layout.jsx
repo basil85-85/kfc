@@ -7,7 +7,7 @@ import Footer from './Footer';
 import ChatDrawer from './ChatDrawer';
 import AiAssistantWidget from './AiAssistantWidget';
 import ErrorBoundary from './ErrorBoundary';
-import { FiHome, FiUsers, FiCalendar, FiGrid, FiUser } from 'react-icons/fi';
+import GlobalCallOverlay from './GlobalCallOverlay';
 
 const Layout = () => {
   const { user } = useContext(AuthContext);
@@ -44,6 +44,9 @@ const Layout = () => {
       </main>
 
       <Footer />
+
+      {/* Global Call Banner Overlay (Incoming & Outgoing Calls) */}
+      <GlobalCallOverlay />
 
       {/* Global Real-Time Chat Drawer */}
       <ChatDrawer />

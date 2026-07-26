@@ -304,6 +304,10 @@ export const ChatProvider = ({ children }) => {
     }
   };
 
+  const toggleChat = useCallback(() => {
+    setIsChatOpen((prev) => !prev);
+  }, []);
+
   return (
     <ChatContext.Provider
       value={{
@@ -316,6 +320,7 @@ export const ChatProvider = ({ children }) => {
         typingUsers,
         isChatOpen,
         setIsChatOpen,
+        toggleChat,
         loadingRooms,
         sendMessage,
         startTyping,

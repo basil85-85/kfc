@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import api from '../services/api';
 import FifaCard from '../components/FifaCard';
 import Loading from '../components/Loading';
+import { ThemeContext } from '../contexts/ThemeContext';
 import { AuthContext } from '../contexts/AuthContext';
 import {
   FiCalendar,
@@ -13,570 +14,739 @@ import {
   FiTrendingUp,
   FiUsers,
   FiZap,
-  FiMapPin,
+  FiActivity,
+  FiLogIn,
+  FiUserPlus,
+  FiChevronDown,
+  FiTarget,
   FiCheckCircle,
-  FiTag,
-  FiStar,
-  FiChevronRight
 } from 'react-icons/fi';
 
-export default function HomePage() {
+// Scoreboard Count-Up Stat Card (100% Theme Driven)
+const CountUpStat = ({ target, label, icon: Icon }) => {
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let start = 0;
+    const end = parseInt(target, 10) || 0;
+    if (end === 0) return;
+    const duration = 1200;
+    const increment = Math.max(1, Math.ceil(end / (duration / 16)));
+    const timer = setInterval(() => {
+      start += increment;
+      if (start >= end) {
+        setCount(end);
+        clearInterval(timer);
+      } else {
+        setCount(start);
+      }
+    }, 16);
+    return () => clearInterval(timer);
+  }, [target]);
+
+  return (
+    <div className="relative overflow-hidden rounded-2xl border border-white/10 bg-slate-900/80 p-6 flex flex-col items-center justify-center text-center space-y-2.5 transition-all duration-300 hover:border-[var(--color-accent)] group">
+      {/* Top Accent Scoreboard Bar (Theme Accent) */}
+      <div
+        className="absolute top-0 left-0 right-0 h-1 group-hover:h-1.5 transition-all duration-300"
+        style={{ backgroundColor: 'var(--color-accent)' }}
+      />
+
+      <div
+        className="rounded-2xl p-3 shadow-md border"
+        style={{
+          backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+          color: 'var(--color-accent)',
+          borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+        }}
+      >
+        <Icon size={22} />
+      </div>
+
+      <span
+        className="font-display text-4xl font-black tracking-tight"
+        style={{ color: 'var(--color-accent)' }}
+      >
+        {count}
+      </span>
+      <span className="text-xs font-bold uppercase tracking-wider text-slate-400">{label}</span>
+    </div>
+  );
+};
+
+const HomePage = () => {
+  const { theme } = useContext(ThemeContext);
   const { user } = useContext(AuthContext);
 
   const [fixtures, setFixtures] = useState([]);
   const [ratings, setRatings] = useState([]);
   const [teams, setTeams] = useState([]);
+  const [playerCount, setPlayerCount] = useState(0);
+  const [countdown, setCountdown] = useState('Loading...');
   const [loading, setLoading] = useState(true);
-  const [countdown, setCountdown] = useState({ hours: '24', mins: '00', secs: '00' });
+
+  const dashboardLink = user?.role === 'admin' ? '/admin/dashboard' : '/dashboard';
 
   useEffect(() => {
     const loadData = async () => {
       try {
-        // Safe data fetching with individual fallbacks so public guests never trigger 401 errors
-        const [fixturesRes, ratingsRes, teamsRes] = await Promise.all([
-          api.get('/fixtures').catch(() => ({ data: [] })),
-          api.get('/ratings').catch(() => ({ data: [] })),
-          api.get('/teams?includeAll=true').catch(() => ({ data: [] })),
+        const [fixturesRes, ratingsRes, teamsRes, usersRes] = await Promise.all([
+          api.get('/fixtures'),
+          api.get('/ratings'),
+          api.get('/teams?includeAll=true'),
+          api.get('/users?all=true'),
         ]);
 
         const fx = Array.isArray(fixturesRes.data) ? fixturesRes.data : [];
-        setFixtures(fx);
-
         const rt = Array.isArray(ratingsRes.data) ? ratingsRes.data : [];
-        setRatings(rt);
-
         const tm = Array.isArray(teamsRes.data) ? teamsRes.data : teamsRes.data?.teams || [];
+        const usr = Array.isArray(usersRes.data) ? usersRes.data : usersRes.data?.users || [];
+
+        setFixtures(fx);
+        setRatings(rt);
         setTeams(tm);
-      } catch (err) {
-        console.error('Failed to load homepage data safely:', err);
+        setPlayerCount(usr.filter((u) => u.role === 'player').length || usr.length || 24);
+      } catch (error) {
+        console.error('Error loading homepage portal data:', error);
       } finally {
         setLoading(false);
       }
     };
-
     loadData();
   }, []);
 
-  // Find next upcoming fixture
   const nextFixture = useMemo(() => {
-    if (!Array.isArray(fixtures) || fixtures.length === 0) return null;
-    const scheduled = fixtures.filter((f) => f && f.status === 'scheduled');
-    return scheduled.sort((a, b) => new Date(a.date) - new Date(b.date))[0] || fixtures[0] || null;
+    const upcoming = fixtures.filter((item) => item && new Date(item.date) > new Date());
+    return upcoming.sort((a, b) => new Date(a.date) - new Date(b.date))[0];
   }, [fixtures]);
 
-  // Live Countdown timer for next match
   useEffect(() => {
-    if (!nextFixture?.date) {
-      setCountdown({ hours: '24', mins: '00', secs: '00' });
+    if (!nextFixture) {
+      setCountdown('MATCHDAY SOON');
       return;
     }
-
-    const updateTimer = () => {
-      const matchTime = new Date(nextFixture.date).getTime();
-      const now = new Date().getTime();
-      const diff = matchTime - now;
-
-      if (diff <= 0) {
-        setCountdown({ hours: '00', mins: '00', secs: '00' });
-      } else {
-        const h = Math.floor(diff / (1000 * 60 * 60));
-        const m = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-        const s = Math.floor((diff % (1000 * 60)) / 1000);
-        setCountdown({
-          hours: String(h).padStart(2, '0'),
-          mins: String(m).padStart(2, '0'),
-          secs: String(s).padStart(2, '0')
-        });
+    const update = () => {
+      const difference = new Date(nextFixture.date) - new Date();
+      if (difference <= 0) {
+        setCountdown('KICKOFF LIVE');
+        return;
       }
+      const days = Math.floor(difference / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((difference / (1000 * 60 * 60)) % 24);
+      const minutes = Math.floor((difference / (1000 * 60)) % 60);
+      const seconds = Math.floor((difference / 1000) % 60);
+      setCountdown(`${days}d ${hours}h ${minutes}m ${seconds}s`);
     };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
+    update();
+    const interval = setInterval(update, 1000);
     return () => clearInterval(interval);
   }, [nextFixture]);
 
-  // Top featured player cards
-  const topPlayers = useMemo(() => {
-    if (Array.isArray(ratings) && ratings.length > 0) {
-      return ratings.filter(r => r && (r.player || r.name)).slice(0, 4);
-    }
-    return [];
-  }, [ratings]);
+  const topPlayers = useMemo(
+    () =>
+      [...ratings]
+        .filter((r) => r && r.player)
+        .sort((a, b) => (b.overall || 0) - (a.overall || 0))
+        .slice(0, 4)
+        .map((r) => ({
+          ...(typeof r.player === 'object' ? r.player : { _id: r.player }),
+          pace: r.pace,
+          shooting: r.shooting,
+          passing: r.passing,
+          dribbling: r.dribbling,
+          defending: r.defending,
+          physical: r.physical,
+          overall: r.overall,
+        })),
+    [ratings]
+  );
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[70vh] items-center justify-center">
-        <Loading message="Loading Malabar United FC..." />
-      </div>
-    );
-  }
+
+  const standingsPreview = useMemo(() => {
+    const map = {};
+    teams.forEach((t) => {
+      if (t?._id) {
+        map[String(t._id)] = {
+          _id: t._id,
+          name: t.name,
+          logo: t.logo,
+          played: 0,
+          won: 0,
+          drawn: 0,
+          lost: 0,
+          gf: 0,
+          ga: 0,
+          gd: 0,
+          points: 0,
+        };
+      }
+    });
+
+    fixtures.forEach((f) => {
+      if (f.status === 'completed' && f.homeTeam && f.awayTeam) {
+        const hId = String(f.homeTeam._id || f.homeTeam);
+        const aId = String(f.awayTeam._id || f.awayTeam);
+        if (!map[hId]) map[hId] = { _id: hId, name: f.homeTeam.name || 'Home', logo: f.homeTeam.logo, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0 };
+        if (!map[aId]) map[aId] = { _id: aId, name: f.awayTeam.name || 'Away', logo: f.awayTeam.logo, played: 0, won: 0, drawn: 0, lost: 0, gf: 0, ga: 0, gd: 0, points: 0 };
+
+        const hG = f.homeScore || 0;
+        const aG = f.awayScore || 0;
+        map[hId].played += 1;
+        map[aId].played += 1;
+        map[hId].gf += hG;
+        map[hId].ga += aG;
+        map[aId].gf += aG;
+        map[aId].ga += hG;
+
+        if (hG > aG) {
+          map[hId].won += 1;
+          map[hId].points += 3;
+          map[aId].lost += 1;
+        } else if (aG > hG) {
+          map[aId].won += 1;
+          map[aId].points += 3;
+          map[hId].lost += 1;
+        } else {
+          map[hId].drawn += 1;
+          map[aId].drawn += 1;
+          map[hId].points += 1;
+          map[aId].points += 1;
+        }
+      }
+    });
+
+    Object.values(map).forEach((t) => {
+      t.gd = t.gf - t.ga;
+    });
+
+    return Object.values(map)
+      .sort((a, b) => b.points - a.points || b.gd - a.gd || b.gf - a.gf)
+      .slice(0, 4);
+  }, [teams, fixtures]);
+
+  const totalGoals = useMemo(
+    () =>
+      fixtures.reduce((acc, f) => {
+        if (f.status === 'completed') {
+          return acc + (f.homeScore || 0) + (f.awayScore || 0);
+        }
+        return acc;
+      }, 0),
+    [fixtures]
+  );
+
+  const latestResult = useMemo(() => {
+    const finished = fixtures.filter((f) => f.status === 'completed');
+    return finished.sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+  }, [fixtures]);
+
+  if (loading) return <Loading message="Preparing KFC matchday portal..." />;
 
   return (
-    <div className="min-h-screen bg-[#04150e] text-[#f8fafc] font-space selection:bg-[#10b981] selection:text-slate-950 -mx-4 sm:-mx-6 lg:-mx-8 -my-8 px-4 sm:px-6 lg:px-8 py-4">
-      {/* ═════════════════════════════════════════════════════════════
-          HERO SECTION (SIGNATURE MOMENT: ANIMATED GOAL & SAVE)
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="relative overflow-hidden pt-8 pb-16 lg:py-20 border-b border-emerald-900/30">
-        {/* Background Floodlight Glows */}
-        <div className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 h-[36rem] w-[50rem] bg-emerald-500/10 blur-[120px] rounded-full" />
-        <div className="pointer-events-none absolute top-1/3 -right-20 h-[25rem] w-[25rem] bg-amber-500/10 blur-[100px] rounded-full" />
+    <div className="space-y-16 pb-16">
+      {/* ── 1. CINEMATIC HERO SECTION (100% THEME DRIVEN) ────────────────── */}
+      <section className="relative min-h-[85vh] flex flex-col justify-between overflow-hidden rounded-3xl border border-white/10 bg-slate-950/90 p-8 sm:p-14 shadow-2xl backdrop-blur-2xl">
+        {/* Soft Radial Ambient Glow using var(--color-accent) */}
+        <div
+          className="pointer-events-none absolute -right-20 -top-20 h-[550px] w-[550px] rounded-full blur-[120px] opacity-25"
+          style={{ backgroundColor: 'var(--color-accent)' }}
+        />
+        <div
+          className="pointer-events-none absolute -left-20 -bottom-20 h-[450px] w-[450px] rounded-full blur-[100px] opacity-15"
+          style={{ backgroundColor: 'var(--color-secondary)' }}
+        />
 
-        <div className="relative mx-auto max-w-7xl">
-          {/* Header Tagline & Club Identity */}
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-emerald-900/40 pb-6 mb-8">
-            <div className="flex items-center gap-3">
-              {/* Gold Crest Badge */}
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-tr from-amber-500 via-amber-400 to-yellow-300 text-slate-950 shadow-lg shadow-amber-500/20 font-anton text-2xl">
-                MU
-              </div>
-              <div>
-                <h2 className="font-anton text-xl tracking-wider text-white uppercase leading-none">
-                  MALABAR UNITED FC
-                </h2>
-                <p className="text-xs font-medium text-emerald-400">Kozhikode, Kerala • Est. 1998</p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2 rounded-full border border-emerald-500/30 bg-emerald-950/60 px-3.5 py-1.5 text-xs font-semibold text-emerald-300 backdrop-blur-md">
-              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
-              <span>OFFICIAL CLUB HOMEPAGE</span>
-            </div>
-          </div>
-
-          {/* Hero Content Grid: Headline Left, Flat Vector SVG Centerpiece Right */}
-          <div className="grid gap-12 lg:grid-cols-12 lg:items-center">
-            {/* Left Headline & Copy */}
-            <div className="lg:col-span-6 space-y-6">
-              <div className="space-y-2">
-                <span className="inline-block font-anton text-sm sm:text-base tracking-widest uppercase text-amber-400">
-                  KOZHIKODE’S PRIDE
-                </span>
-                <h1 className="font-anton text-5xl sm:text-7xl xl:text-8xl leading-[0.9] text-white tracking-tight uppercase">
-                  ONE CLUB.<br />
-                  <span className="text-transparent bg-clip-text bg-gradient-to-r from-emerald-400 via-teal-300 to-amber-300">
-                    ONE CITY.
-                  </span>
-                </h1>
-              </div>
-
-              <p className="text-slate-300 text-sm sm:text-base leading-relaxed max-w-lg font-normal">
-                Welcome to the official home of Malabar United FC. From the roaring stands of Kozhikode to tactical pitch action, we bleed green & gold. Experience matchdays, player stats, and club glory.
-              </p>
-
-              {/* Hero Action Buttons */}
-              <div className="flex flex-wrap items-center gap-4 pt-2">
-                <Link
-                  to={user ? "/fixtures" : "/register"}
-                  className="flex min-h-[52px] items-center gap-3 rounded-xl bg-gradient-to-r from-emerald-500 via-teal-500 to-emerald-600 px-7 py-3.5 text-sm font-bold uppercase tracking-wider text-slate-950 shadow-xl shadow-emerald-500/25 transition hover:brightness-110 hover:scale-105 active:scale-95"
-                >
-                  <FiTag className="h-5 w-5" />
-                  <span>GET MATCH TICKETS</span>
-                </Link>
-
-                <Link
-                  to="/squad"
-                  className="flex min-h-[52px] items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-950/40 px-6 py-3.5 text-sm font-bold uppercase tracking-wider text-emerald-300 backdrop-blur-md transition hover:bg-emerald-900/60 hover:text-white"
-                >
-                  <FiUsers className="h-5 w-5" />
-                  <span>EXPLORE SQUAD</span>
-                </Link>
-              </div>
-            </div>
-
-            {/* Right: Signature Flat Vector SVG Goal & Save Centerpiece */}
-            <div className="lg:col-span-6">
-              <div className="relative overflow-hidden rounded-3xl border-2 border-emerald-500/30 bg-gradient-to-b from-[#062016] to-[#03110b] p-4 sm:p-6 shadow-2xl">
-                {/* Stadium Crowd Roar Light Flash Overlay */}
-                <div className="animate-crowd-flash pointer-events-none absolute inset-0 bg-gradient-to-tr from-amber-400/30 via-white/40 to-emerald-400/30 z-20" />
-
-                {/* Top Badge Overlay */}
-                <div className="absolute top-6 left-6 z-30 flex items-center gap-2 rounded-lg bg-black/60 px-3 py-1.5 backdrop-blur-md border border-white/10">
-                  <span className="h-2 w-2 rounded-full bg-rose-500 animate-ping" />
-                  <span className="text-[11px] font-bold uppercase tracking-wider text-white">KEY MOMENT • TOP CORNER SAVE</span>
-                </div>
-
-                {/* SVG Canvas (800 x 450) */}
-                <svg
-                  viewBox="0 0 800 450"
-                  className="w-full h-auto rounded-2xl relative z-10 bg-[#041910] border border-emerald-900/50"
-                  preserveAspectRatio="xMidYMid meet"
-                >
-                  <defs>
-                    {/* Goal Net Pattern */}
-                    <pattern id="goalNetPattern" width="16" height="16" patternUnits="userSpaceOnUse">
-                      <path d="M 16 0 L 0 16 M 0 0 L 16 16" fill="none" stroke="rgba(248, 250, 252, 0.12)" strokeWidth="1" />
-                    </pattern>
-
-                    {/* Floodlight Beam Gradient */}
-                    <linearGradient id="floodlightBeam" x1="0" y1="0" x2="1" y2="1">
-                      <stop offset="0%" stopColor="#10b981" stopOpacity="0.25" />
-                      <stop offset="100%" stopColor="#04150e" stopOpacity="0" />
-                    </linearGradient>
-                  </defs>
-
-                  {/* Stadium Pitch Background & Lines */}
-                  <rect width="800" height="450" fill="#041910" />
-
-                  {/* Floodlight Rays */}
-                  <polygon points="0,0 300,0 800,450 0,450" fill="url(#floodlightBeam)" />
-                  <polygon points="500,0 800,0 800,450 200,450" fill="url(#floodlightBeam)" opacity="0.6" />
-
-                  {/* Pitch Turf Stripes */}
-                  <rect x="0" y="320" width="800" height="130" fill="#062619" />
-                  <rect x="0" y="360" width="800" height="40" fill="#041f14" />
-                  <line x1="0" y1="340" x2="800" y2="340" stroke="rgba(16, 185, 129, 0.3)" strokeWidth="2" strokeDasharray="8 8" />
-
-                  {/* GOALPOST STRUCTURE (Right Side Goal Frame) */}
-                  {/* Goal Net Background */}
-                  <rect x="520" y="80" width="230" height="240" fill="url(#goalNetPattern)" stroke="rgba(248,250,252,0.2)" strokeWidth="2" />
-
-                  {/* Goal Post & Crossbar (Bright White Vector Frame) */}
-                  <path d="M 515 320 L 515 75 L 755 75 L 755 320" fill="none" stroke="#f8fafc" strokeWidth="8" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M 515 75 L 545 110 L 745 110 L 755 75" fill="none" stroke="rgba(248,250,252,0.4)" strokeWidth="3" />
-
-                  {/* Pitch Goal Line */}
-                  <line x1="100" y1="320" x2="770" y2="320" stroke="#f8fafc" strokeWidth="4" opacity="0.8" />
-                  <ellipse cx="635" cy="320" rx="40" ry="12" fill="none" stroke="rgba(248,250,252,0.3)" strokeWidth="2" />
-
-                  {/* GOALKEEPER SILHOUETTE (Diving Vector) */}
-                  <g className="animate-keeper-dive">
-                    {/* Goalkeeper Body & Arms Extended */}
-                    <path
-                      d="M -30 -10 Q -10 -25, 15 -20 Q 35 -15, 55 -5 Q 70 5, 85 10 L 95 0 L 80 -15 Q 50 -30, 20 -35 Q -10 -40, -40 -20 Z"
-                      fill="#fbbf24"
-                    />
-                    {/* Gloves (Catching Hands right at the top corner) */}
-                    <circle cx="95" cy="0" r="10" fill="#10b981" />
-                    <circle cx="85" cy="-8" r="9" fill="#10b981" />
-                    {/* Keeper Head */}
-                    <circle cx="20" cy="-25" r="12" fill="#0f172a" />
-                    {/* Keeper Legs */}
-                    <path d="M -40 -20 L -80 -10 L -65 -35 Z" fill="#1e293b" />
-                  </g>
-
-                  {/* FOOTBALL (Curling Trajectory Vector) */}
-                  <g className="animate-ball-curl">
-                    {/* Football Circle */}
-                    <circle cx="0" cy="0" r="14" fill="#f8fafc" stroke="#0f172a" strokeWidth="2" />
-                    {/* Pentagon Markings */}
-                    <polygon points="0,-7 6,-2 4,5 -4,5 -6,-2" fill="#0f172a" />
-                    <line x1="0" y1="-7" x2="0" y2="-14" stroke="#0f172a" strokeWidth="1.5" />
-                    <line x1="6" y1="-2" x2="12" y2="-5" stroke="#0f172a" strokeWidth="1.5" />
-                    <line x1="4" y1="5" x2="9" y2="11" stroke="#0f172a" strokeWidth="1.5" />
-                    <line x1="-4" y1="5" x2="-9" y2="11" stroke="#0f172a" strokeWidth="1.5" />
-                    <line x1="-6" y1="-2" x2="-12" y2="-5" stroke="#0f172a" strokeWidth="1.5" />
-                  </g>
-                </svg>
-
-                {/* "SAVED!" Freeze Badge Pop Overlay */}
-                <div className="animate-saved-badge absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-30 pointer-events-none">
-                  <div className="flex flex-col items-center justify-center rounded-2xl bg-gradient-to-r from-rose-600 via-red-600 to-amber-500 px-6 py-3 shadow-2xl shadow-rose-600/50 border-2 border-white/40">
-                    <span className="font-anton text-3xl sm:text-5xl tracking-widest text-white uppercase drop-shadow-md">
-                      SAVED! 🧤
-                    </span>
-                    <span className="text-[10px] sm:text-xs font-bold uppercase tracking-wider text-amber-200">
-                      CLUTCH TOP-CORNER STOP
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 1: MARQUEE STRIP (STADIUM BANNER)
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="overflow-hidden border-y border-emerald-500/20 bg-gradient-to-r from-[#03130c] via-[#082b1c] to-[#03130c] py-4">
-        <div className="animate-marquee flex items-center whitespace-nowrap">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="flex items-center gap-8 px-4">
-              <span className="font-anton text-2xl sm:text-4xl tracking-widest text-white uppercase">
-                ONE CLUB. ONE CITY.
-              </span>
-              <span className="text-amber-400 font-anton text-2xl sm:text-4xl">★</span>
-              <span className="font-anton text-2xl sm:text-4xl tracking-widest text-emerald-400 uppercase">
-                MALABAR UNITED FC
-              </span>
-              <span className="text-amber-400 font-anton text-2xl sm:text-4xl">★</span>
-              <span className="font-anton text-2xl sm:text-4xl tracking-widest text-slate-300 uppercase">
-                KOZHIKODE, KERALA
-              </span>
-              <span className="text-amber-400 font-anton text-2xl sm:text-4xl">★</span>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 2: CLUB STATS BAR (BIG EDITORIAL NUMBERS)
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="py-14 border-b border-emerald-900/30">
-        <div className="mx-auto max-w-7xl">
-          <div className="grid grid-cols-2 gap-4 lg:grid-cols-4 sm:gap-6">
-            <div className="rounded-2xl border border-emerald-500/20 bg-[#061d14]/80 p-6 text-center space-y-1">
-              <span className="font-anton text-5xl sm:text-6xl text-amber-400 tracking-tight block">
-                1998
-              </span>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">FOUNDED YEAR</span>
-              <p className="text-[11px] text-slate-400">Kozhikode Legacy</p>
-            </div>
-
-            <div className="rounded-2xl border border-emerald-500/20 bg-[#061d14]/80 p-6 text-center space-y-1">
-              <span className="font-anton text-5xl sm:text-6xl text-emerald-400 tracking-tight block">
-                30,000+
-              </span>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">HOME GROUND CAPACITY</span>
-              <p className="text-[11px] text-slate-400">EMSC Stadium, Kozhikode</p>
-            </div>
-
-            <div className="rounded-2xl border border-emerald-500/20 bg-[#061d14]/80 p-6 text-center space-y-1">
-              <span className="font-anton text-5xl sm:text-6xl text-amber-400 tracking-tight block">
-                14
-              </span>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">MAJOR TROPHIES</span>
-              <p className="text-[11px] text-slate-400">State & Regional Cups</p>
-            </div>
-
-            <div className="rounded-2xl border border-emerald-500/20 bg-[#061d14]/80 p-6 text-center space-y-1">
-              <span className="font-anton text-5xl sm:text-6xl text-emerald-400 tracking-tight block">
-                100%
-              </span>
-              <span className="text-xs font-bold uppercase tracking-wider text-slate-300">CITY PASSION</span>
-              <p className="text-[11px] text-slate-400">One Club. One City.</p>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 3: NEXT MATCH CARD (COUNTDOWN & MATCHDAY DETAILS)
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="py-16 border-b border-emerald-900/30">
-        <div className="mx-auto max-w-7xl space-y-8">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div>
-              <span className="font-anton text-xs tracking-widest text-emerald-400 uppercase">MATCHDAY FOCUS</span>
-              <h2 className="font-anton text-4xl sm:text-5xl text-white tracking-tight uppercase">NEXT MATCH fixture</h2>
-            </div>
-            <Link
-              to="/fixtures"
-              className="inline-flex items-center gap-2 text-xs font-bold uppercase text-emerald-400 hover:text-emerald-300 transition"
+        {/* Hero Body Content */}
+        <div className="my-auto grid gap-12 lg:grid-cols-[1.3fr_0.9fr] lg:items-center relative z-10 pt-4">
+          <div className="space-y-6">
+            {/* Club Crest Badge Pill */}
+            <div
+              className="inline-flex items-center gap-3 rounded-full border px-4 py-1.5 text-xs font-black uppercase tracking-widest"
+              style={{
+                borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 12%, transparent)',
+                color: 'var(--color-accent)',
+              }}
             >
-              <span>View Full Match Schedule</span>
-              <FiChevronRight className="h-4 w-4" />
-            </Link>
-          </div>
-
-          {/* Next Match Banner Card */}
-          <div className="relative overflow-hidden rounded-3xl border-2 border-emerald-500/30 bg-gradient-to-r from-[#062016] via-[#0a3022] to-[#041710] p-6 sm:p-10 shadow-2xl">
-            {/* Crimson Live Tag */}
-            <div className="absolute top-6 left-6 flex items-center gap-2 rounded-full border border-rose-500/30 bg-rose-500/10 px-3.5 py-1 text-xs font-bold text-rose-400">
-              <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse" />
-              <span>OFFICIAL MATCHDAY</span>
+              {theme.logoURL ? (
+                <img
+                  src={theme.logoURL}
+                  alt="Club Crest"
+                  className="h-6 w-6 rounded-full object-contain"
+                />
+              ) : (
+                <FiShield size={16} style={{ color: 'var(--color-accent)' }} />
+              )}
+              <span>{theme.heroText || 'Kolothum Kadhavu FC'}</span>
             </div>
 
-            <div className="grid gap-8 lg:grid-cols-12 lg:items-center pt-6">
-              {/* Teams Matchup */}
-              <div className="lg:col-span-7 flex flex-col sm:flex-row items-center justify-between gap-6 text-center sm:text-left">
-                {/* Home Team */}
-                <div className="flex flex-col items-center sm:items-start gap-2">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-amber-400 text-slate-950 font-anton text-2xl shadow-lg shadow-amber-400/20">
-                    MU
-                  </div>
-                  <div>
-                    <h3 className="font-anton text-2xl text-white tracking-wide">
-                      {nextFixture?.homeTeam?.name || 'MALABAR UNITED FC'}
-                    </h3>
-                    <span className="text-xs text-emerald-400 font-semibold">HOME TEAM</span>
-                  </div>
-                </div>
-
-                <div className="font-anton text-4xl text-amber-400 italic px-4">VS</div>
-
-                {/* Away Team */}
-                <div className="flex flex-col items-center sm:items-end gap-2 text-center sm:text-right">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-800 text-cyan-400 border border-cyan-500/30 font-anton text-2xl shadow-lg">
-                    {nextFixture?.awayTeam?.name?.substring(0, 2).toUpperCase() || 'ES'}
-                  </div>
-                  <div>
-                    <h3 className="font-anton text-2xl text-white tracking-wide">
-                      {nextFixture?.awayTeam?.name || 'EAGLE STARS KOZHIKODE'}
-                    </h3>
-                    <span className="text-xs text-slate-400 font-semibold">CHALLENGERS</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Countdown & RSVP CTA */}
-              <div className="lg:col-span-5 flex flex-col items-center justify-center rounded-2xl border border-emerald-500/20 bg-[#03150d]/80 p-6 space-y-4 text-center">
-                <span className="text-xs font-bold uppercase tracking-wider text-slate-400">KICK-OFF COUNTDOWN</span>
-                <div className="flex items-center gap-3 font-anton text-3xl sm:text-4xl text-amber-400">
-                  <div className="flex flex-col items-center">
-                    <span className="bg-slate-900 px-3 py-1.5 rounded-xl border border-white/10">{countdown.hours}</span>
-                    <span className="text-[10px] font-space text-slate-400 mt-1 uppercase">HRS</span>
-                  </div>
-                  <span>:</span>
-                  <div className="flex flex-col items-center">
-                    <span className="bg-slate-900 px-3 py-1.5 rounded-xl border border-white/10">{countdown.mins}</span>
-                    <span className="text-[10px] font-space text-slate-400 mt-1 uppercase">MINS</span>
-                  </div>
-                  <span>:</span>
-                  <div className="flex flex-col items-center">
-                    <span className="bg-slate-900 px-3 py-1.5 rounded-xl border border-white/10">{countdown.secs}</span>
-                    <span className="text-[10px] font-space text-slate-400 mt-1 uppercase">SECS</span>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2 text-xs text-slate-300">
-                  <FiMapPin className="text-emerald-400" />
-                  <span>EMSC Stadium, Kozhikode • {nextFixture?.date ? new Date(nextFixture.date).toLocaleDateString() : 'Saturday 4:00 PM'}</span>
-                </div>
-
-                <Link
-                  to={nextFixture ? `/fixtures/${nextFixture._id}` : '/fixtures'}
-                  className="w-full rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 py-3 text-xs font-bold uppercase tracking-wider text-slate-950 shadow-lg shadow-emerald-500/20 hover:brightness-110 transition"
-                >
-                  RESERVE MATCHDAY PASS
-                </Link>
+            {/* Headline with Animated Draw-in Theme Accent Bar */}
+            <div className="space-y-3">
+              <h1 className="font-display text-4xl font-black tracking-tight text-white sm:text-6xl lg:text-7xl leading-[1.05]">
+                {theme.tagline || 'Every Click. Every Goal. Every Spot Earned.'}
+              </h1>
+              {/* Draw-in Underline Bar */}
+              <div className="w-full bg-white/10 h-1 rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full animate-draw-underline"
+                  style={{
+                    background: `linear-gradient(to right, var(--color-accent), var(--color-secondary))`,
+                  }}
+                />
               </div>
             </div>
-          </div>
-        </div>
-      </section>
 
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 4: SQUAD HIGHLIGHT (PLAYER CARDS)
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="py-16 border-b border-emerald-900/30">
-        <div className="mx-auto max-w-7xl space-y-8">
-          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div>
-              <span className="font-anton text-xs tracking-widest text-emerald-400 uppercase">SQUAD SPOTLIGHT</span>
-              <h2 className="font-anton text-4xl sm:text-5xl text-white tracking-tight uppercase">KEY PLAYERS & CARDS</h2>
-            </div>
-            <Link
-              to="/squad"
-              className="inline-flex items-center gap-2 text-xs font-bold uppercase text-emerald-400 hover:text-emerald-300 transition"
-            >
-              <span>Explore Entire Roster</span>
-              <FiChevronRight className="h-4 w-4" />
-            </Link>
-          </div>
-
-          {/* Player Cards Grid */}
-          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-4">
-            {topPlayers.length > 0 ? (
-              topPlayers.map((player) => (
-                <div key={player._id} className="flex justify-center">
-                  <FifaCard player={player} />
-                </div>
-              ))
-            ) : (
-              /* Fallback Styled Squad Cards if ratings API is empty */
-              [
-                { name: 'Rahul K.V.', pos: 'ST', num: '9', ovr: 88, pace: 91, sho: 89, pas: 82 },
-                { name: 'Anas N.P.', pos: 'CM', num: '8', ovr: 86, pace: 84, sho: 82, pas: 90 },
-                { name: 'Fahad Kozhikode', pos: 'CB', num: '4', ovr: 87, pace: 82, sho: 65, pas: 78 },
-                { name: 'Jithin V.', pos: 'GK', num: '1', ovr: 89, pace: 75, sho: 40, pas: 85 }
-              ].map((p, idx) => (
-                <div key={idx} className="rounded-2xl border border-emerald-500/20 bg-[#061d14]/90 p-5 space-y-4 hover:border-amber-400/50 transition duration-300 group">
-                  <div className="flex items-center justify-between">
-                    <span className="rounded-lg bg-amber-400/20 px-2.5 py-1 text-xs font-extrabold text-amber-300 border border-amber-400/30">
-                      OVR {p.ovr}
-                    </span>
-                    <span className="font-anton text-lg text-emerald-400">#{p.num} • {p.pos}</span>
-                  </div>
-                  <div className="h-40 rounded-xl bg-gradient-to-t from-slate-950 via-slate-900 to-emerald-950/40 flex items-center justify-center border border-white/10 relative overflow-hidden group-hover:scale-102 transition">
-                    <div className="font-anton text-5xl text-emerald-400/20 uppercase">{p.pos}</div>
-                    <span className="absolute bottom-3 font-anton text-lg text-white tracking-wide">{p.name}</span>
-                  </div>
-                  <div className="grid grid-cols-3 gap-2 text-center text-[10px] font-bold uppercase text-slate-300">
-                    <div className="bg-slate-900/60 p-1.5 rounded-lg">PAC {p.pace}</div>
-                    <div className="bg-slate-900/60 p-1.5 rounded-lg">SHO {p.sho}</div>
-                    <div className="bg-slate-900/60 p-1.5 rounded-lg">PAS {p.pas}</div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </section>
-
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 5: MEMBERSHIP & TICKET CTA
-          ═════════════════════════════════════════════════════════════ */}
-      <section className="py-20 border-b border-emerald-900/30">
-        <div className="mx-auto max-w-7xl">
-          <div className="relative overflow-hidden rounded-3xl border-2 border-emerald-500/40 bg-gradient-to-r from-emerald-950 via-[#06291b] to-slate-950 p-8 sm:p-14 shadow-2xl text-center space-y-6">
-            {/* Background Glow */}
-            <div className="pointer-events-none absolute -top-24 left-1/2 -translate-x-1/2 h-64 w-96 bg-amber-400/10 blur-3xl rounded-full" />
-
-            <span className="font-anton text-xs tracking-widest text-amber-400 uppercase">OFFICIAL CLUB MEMBERSHIP</span>
-            <h2 className="font-anton text-4xl sm:text-6xl text-white tracking-tight uppercase leading-tight">
-              BECOME PART OF MALABAR UNITED
-            </h2>
-            <p className="text-slate-300 text-sm sm:text-base max-w-2xl mx-auto leading-relaxed font-normal">
-              Join 30,000+ passionate supporters in Kozhikode. Unlock priority matchday tickets, exclusive squad training session signups, and official member perks.
+            <p className="max-w-xl text-base sm:text-lg leading-relaxed text-slate-300 font-normal">
+              Welcome to the official digital portal of Kolothum Kadhavu Football Club. Track live matchday fixtures, tactical lineups, real-time standings, and FIFA squad ratings.
             </p>
 
-            <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
-              <Link
-                to={user ? "/dashboard" : "/register"}
-                className="flex min-h-[52px] items-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 via-amber-500 to-yellow-500 px-8 py-3.5 text-sm font-bold uppercase tracking-wider text-slate-950 shadow-xl shadow-amber-500/25 hover:brightness-110 hover:scale-105 transition"
-              >
-                <span>JOIN AS A MEMBER</span>
-                <FiArrowRight className="h-4 w-4" />
-              </Link>
-
-              {!user && (
+            {/* Auth-Aware Conversion CTAs */}
+            <div className="flex flex-wrap items-center gap-4 pt-3">
+              {user ? (
                 <Link
-                  to="/login"
-                  className="flex min-h-[52px] items-center gap-2 rounded-xl border border-white/20 bg-slate-900/80 px-8 py-3.5 text-sm font-bold uppercase tracking-wider text-white hover:bg-slate-800 transition"
+                  to={dashboardLink}
+                  className="rounded-2xl px-7 py-3.5 text-sm font-black text-slate-950 transition-all duration-300 hover:scale-[1.05] flex items-center gap-2 shadow-lg"
+                  style={{
+                    backgroundColor: 'var(--color-accent)',
+                    boxShadow: '0 0 25px color-mix(in srgb, var(--color-accent) 40%, transparent)',
+                  }}
                 >
-                  <span>SIGN IN TO PORTAL</span>
+                  <span>Go to Dashboard</span>
+                  <FiArrowRight size={18} />
                 </Link>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Link
+                    to="/login"
+                    className="rounded-2xl px-7 py-3.5 text-sm font-black text-slate-950 transition-all duration-300 hover:scale-[1.05] flex items-center gap-2 shadow-lg"
+                    style={{
+                      backgroundColor: 'var(--color-accent)',
+                      boxShadow: '0 0 25px color-mix(in srgb, var(--color-accent) 40%, transparent)',
+                    }}
+                  >
+                    <FiLogIn size={18} />
+                    <span>Login to Portal</span>
+                  </Link>
+                  <Link
+                    to="/register"
+                    className="rounded-2xl border px-7 py-3.5 text-sm font-black transition-all duration-300 flex items-center gap-2"
+                    style={{
+                      borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+                      backgroundColor: 'slate-900',
+                      color: 'var(--color-accent)',
+                    }}
+                  >
+                    <FiUserPlus size={18} />
+                    <span>Register Account</span>
+                  </Link>
+                </div>
+              )}
+
+              <Link
+                to="/squad"
+                className="rounded-2xl border border-white/10 bg-slate-900/80 px-6 py-3.5 text-sm font-bold text-white hover:border-[var(--color-accent)] transition-all flex items-center gap-2"
+              >
+                <FiUsers size={18} style={{ color: 'var(--color-accent)' }} />
+                <span>Explore Squad</span>
+              </Link>
+            </div>
+          </div>
+
+          {/* Right Hero Cards (Next Match + Countdown) */}
+          <div className="space-y-4 relative z-10">
+            <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-6 shadow-2xl space-y-3 hover:border-[var(--color-accent)] transition-all">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-accent)' }}>
+                  Next Matchday
+                </span>
+                <span
+                  className="rounded-full px-3 py-0.5 text-[10px] font-extrabold uppercase tracking-wider border"
+                  style={{
+                    backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+                    color: 'var(--color-accent)',
+                    borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+                  }}
+                >
+                  Season 2025-26
+                </span>
+              </div>
+              <div>
+                <h3 className="font-display text-2xl font-black text-white">
+                  {nextFixture
+                    ? `${nextFixture.homeTeam?.name || 'Home Team'} vs ${nextFixture.awayTeam?.name || 'Away Team'}`
+                    : 'KFC Senior vs Kadhavu United'}
+                </h3>
+                <p className="mt-1.5 text-xs font-medium text-slate-400 flex items-center gap-1.5">
+                  <FiCalendar size={13} style={{ color: 'var(--color-accent)' }} />
+                  <span>
+                    {nextFixture
+                      ? `${new Date(nextFixture.date).toLocaleString()} · ${nextFixture.venue || 'Stadium Pitch'}`
+                      : 'Scheduled for upcoming matchday'}
+                  </span>
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-900/80 p-6 shadow-2xl space-y-2 hover:border-[var(--color-accent)] transition-all">
+              <div className="flex items-center justify-between border-b border-white/10 pb-3">
+                <span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Kickoff Countdown</span>
+                <FiClock style={{ color: 'var(--color-accent)' }} className="animate-spin" size={18} />
+              </div>
+              <div className="pt-2">
+                <p
+                  className="font-mono text-3xl sm:text-4xl font-black tracking-wider"
+                  style={{ color: 'var(--color-accent)' }}
+                >
+                  {countdown}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">Official Club Match Timer</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Scroll Indicator */}
+        <div className="relative z-10 flex flex-col items-center justify-center pt-8 text-center">
+          <span className="text-[10px] font-bold uppercase tracking-widest text-slate-500 mb-1">Scroll to Explore</span>
+          <FiChevronDown size={20} style={{ color: 'var(--color-accent)' }} className="animate-bounce" />
+        </div>
+      </section>
+
+      {/* ── 2. TRENDING NOW STRIP ─────────────────────────────────────────── */}
+      <section
+        className="rounded-2xl border p-5 shadow-lg"
+        style={{
+          borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+          backgroundColor: 'color-mix(in srgb, var(--color-accent) 5%, transparent)',
+        }}
+      >
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4 items-center">
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-xl p-2.5 shrink-0 border"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+                color: 'var(--color-accent)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+              }}
+            >
+              <FiAward size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Current Campaign</span>
+              <p className="font-display text-sm font-bold text-white">Season 2025-26</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-xl p-2.5 shrink-0 border"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+                color: 'var(--color-accent)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+              }}
+            >
+              <FiTrendingUp size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">League Leader</span>
+              <p className="font-display text-sm font-bold" style={{ color: 'var(--color-accent)' }}>
+                {standingsPreview[0]?.name || 'Real Madrid'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-xl p-2.5 shrink-0 border"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+                color: 'var(--color-accent)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+              }}
+            >
+              <FiTarget size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Goals</span>
+              <p className="font-display text-sm font-bold text-white">{totalGoals || 42} Goals Scored</p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3">
+            <div
+              className="rounded-xl p-2.5 shrink-0 border"
+              style={{
+                backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+                color: 'var(--color-accent)',
+                borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+              }}
+            >
+              <FiActivity size={20} />
+            </div>
+            <div>
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Latest Result</span>
+              <p className="font-display text-xs font-bold text-slate-200 truncate">
+                {latestResult
+                  ? `${latestResult.homeTeam?.name} ${latestResult.homeScore} - ${latestResult.awayScore} ${latestResult.awayTeam?.name}`
+                  : 'KFC 3 - 1 Kadhavu Utd'}
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-b border-white/10 my-8" />
+
+      {/* ── 3. BY THE NUMBERS (SCOREBOARD STAT CARDS) ───────────────────── */}
+      <section className="space-y-6">
+        <div className="space-y-2">
+          <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--color-accent)' }}>
+            <FiShield size={14} />
+            <span>Club Metrics</span>
+          </div>
+          <h2 className="font-display text-3xl font-black text-white sm:text-4xl">By the Numbers</h2>
+          <div className="w-24 h-1 rounded-full" style={{ backgroundColor: 'var(--color-accent)' }} />
+        </div>
+
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <CountUpStat target={playerCount} label="Registered Players" icon={FiUsers} />
+          <CountUpStat target={fixtures.length || 12} label="Matches Scheduled" icon={FiCalendar} />
+          <CountUpStat target={teams.length || 4} label="Active Squad Teams" icon={FiShield} />
+          <CountUpStat target={totalGoals || 42} label="Goals Scored" icon={FiZap} />
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-b border-white/10 my-8" />
+
+      {/* ── 4. ABOUT THE CLUB SECTION ───────────────────────────────────── */}
+      <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-8 sm:p-12 shadow-2xl space-y-6 hover:border-[var(--color-accent)] transition-all">
+        <div className="grid gap-8 lg:grid-cols-2 lg:items-center">
+          <div className="space-y-4">
+            <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--color-accent)' }}>
+              <FiShield size={14} />
+              <span>Our Heritage</span>
+            </div>
+            <h2 className="font-display text-3xl font-black text-white sm:text-4xl leading-tight">
+              Building Legacy, One Spot & Match at a Time
+            </h2>
+            <div className="w-20 h-1 rounded-full" style={{ backgroundColor: 'var(--color-accent)' }} />
+
+            <p className="text-sm text-slate-300 leading-relaxed">
+              Kolothum Kadhavu FC is committed to fostering tactical excellence, competitive integrity, and player development. From grass-roots training to high-stakes tournament finals, every player earns their starting XI position through raw performance.
+            </p>
+
+            <div className="grid gap-3 pt-2">
+              <div className="flex items-center gap-2.5 text-xs font-bold text-white">
+                <FiCheckCircle style={{ color: 'var(--color-accent)' }} className="shrink-0" size={16} />
+                <span>Transparent FIFA-Style Player Attribute Ratings</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs font-bold text-white">
+                <FiCheckCircle style={{ color: 'var(--color-accent)' }} className="shrink-0" size={16} />
+                <span>Live Interactive Lineup Planner for 5s, 7s & 11s Formats</span>
+              </div>
+              <div className="flex items-center gap-2.5 text-xs font-bold text-white">
+                <FiCheckCircle style={{ color: 'var(--color-accent)' }} className="shrink-0" size={16} />
+                <span>Real-Time League Standings & Goal Difference Calculation</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="relative flex justify-center">
+            <div
+              className="relative h-64 w-64 rounded-full border-2 p-6 shadow-2xl flex items-center justify-center bg-slate-950"
+              style={{ borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)' }}
+            >
+              {theme.logoURL ? (
+                <img src={theme.logoURL} alt="Club Crest" className="h-full w-full object-contain" />
+              ) : (
+                <div className="text-center space-y-2">
+                  <FiShield size={64} className="mx-auto animate-pulse" style={{ color: 'var(--color-accent)' }} />
+                  <p className="font-display text-xl font-black text-white">KFC CLUB</p>
+                </div>
               )}
             </div>
           </div>
         </div>
       </section>
 
-      {/* ═════════════════════════════════════════════════════════════
-          SECTION 6: FOOTER WITH CREST & SOCIAL LINKS
-          ═════════════════════════════════════════════════════════════ */}
-      <footer className="pt-12 pb-8">
-        <div className="mx-auto max-w-7xl space-y-8">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-6 border-b border-emerald-900/40 pb-8 text-center sm:text-left">
-            <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-amber-400 text-slate-950 font-anton text-2xl">
-                MU
-              </div>
-              <div>
-                <h3 className="font-anton text-xl text-white tracking-wide uppercase">MALABAR UNITED FC</h3>
-                <p className="text-xs text-emerald-400 font-semibold">One Club. One City. Kozhikode, Kerala.</p>
-              </div>
-            </div>
+      {/* Divider */}
+      <div className="border-b border-white/10 my-8" />
 
-            {/* Social media links */}
-            <div className="flex items-center gap-4 text-sm text-slate-400 font-semibold">
-              <a href="#instagram" className="hover:text-amber-400 transition">INSTAGRAM</a>
-              <span>•</span>
-              <a href="#twitter" className="hover:text-amber-400 transition">TWITTER / X</a>
-              <span>•</span>
-              <a href="#youtube" className="hover:text-amber-400 transition">YOUTUBE</a>
-              <span>•</span>
-              <a href="#facebook" className="hover:text-amber-400 transition">FACEBOOK</a>
+      {/* ── 5. MEET THE SQUAD PREVIEW (FUT FIFA CARDS) ───────────────────── */}
+      <section className="space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="space-y-1">
+            <div className="inline-flex items-center gap-2 text-xs font-bold uppercase tracking-widest" style={{ color: 'var(--color-accent)' }}>
+              <FiShield size={14} />
+              <span>Squad Showcase</span>
             </div>
+            <h2 className="font-display text-3xl font-black text-white">Meet Top Rated Players</h2>
+            <div className="w-20 h-1 rounded-full" style={{ backgroundColor: 'var(--color-accent)' }} />
           </div>
 
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4 text-xs text-slate-500">
-            <p>© {new Date().getFullYear()} Malabar United FC. All rights reserved.</p>
-            <p>Built with Editorial Sports Design • EMSC Stadium, Kozhikode</p>
-          </div>
+          <Link
+            to="/squad"
+            className="group text-xs font-bold flex items-center gap-1.5 transition"
+            style={{ color: 'var(--color-accent)' }}
+          >
+            <span>View Full Squad</span>
+            <FiArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+          </Link>
         </div>
-      </footer>
+
+        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-4 items-start">
+          {topPlayers.map((player, idx) => (
+            <div
+              key={player._id || player.id || `top-player-${idx}`}
+              className="page-enter transition-all duration-300 h-[470px]"
+              style={{ animationDelay: `${idx * 40}ms` }}
+            >
+              <FifaCard player={player} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      {/* Divider */}
+      <div className="border-b border-white/10 my-8" />
+
+      {/* ── 6. LEAGUE TABLE STANDINGS PREVIEW (TOP 4) ────────────────────── */}
+      {standingsPreview.length > 0 && (
+        <section className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 sm:p-8 space-y-6 hover:border-[var(--color-accent)] transition-all">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-b border-white/10 pb-4">
+            <div>
+              <span className="text-[10px] font-black uppercase tracking-widest" style={{ color: 'var(--color-accent)' }}>
+                League Table
+              </span>
+              <h2 className="font-display text-2xl font-black text-white">Top 4 Standings Preview</h2>
+            </div>
+            <Link
+              to="/fixtures"
+              className="group text-xs font-bold flex items-center gap-1.5 transition"
+              style={{ color: 'var(--color-accent)' }}
+            >
+              <span>Full Schedule & Standings</span>
+              <FiArrowRight size={14} className="transition-transform group-hover:translate-x-1" />
+            </Link>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs">
+              <thead className="border-b border-white/10 bg-slate-950 uppercase tracking-wider text-slate-400 font-bold">
+                <tr>
+                  <th className="py-3 px-4">Rank</th>
+                  <th className="py-3 px-4">Club Team</th>
+                  <th className="py-3 px-4 text-center">P</th>
+                  <th className="py-3 px-4 text-center">W</th>
+                  <th className="py-3 px-4 text-center">D</th>
+                  <th className="py-3 px-4 text-center">L</th>
+                  <th className="py-3 px-4 text-center">GD</th>
+                  <th className="py-3 px-4 text-center">PTS</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-slate-200 font-semibold">
+                {standingsPreview.map((team, idx) => (
+                  <tr key={team._id || `standings-team-${idx}`} className="hover:bg-white/5 transition">
+
+                    <td className="py-3.5 px-4 font-black" style={{ color: 'var(--color-accent)' }}>#{idx + 1}</td>
+                    <td className="py-3.5 px-4 font-bold text-white flex items-center gap-2">
+                      {team.logo && <img src={team.logo} alt="" className="h-5 w-5 rounded-full object-contain" />}
+                      <span>{team.name}</span>
+                    </td>
+                    <td className="py-3.5 px-4 text-center">{team.played}</td>
+                    <td className="py-3.5 px-4 text-center text-emerald-400">{team.won}</td>
+                    <td className="py-3.5 px-4 text-center text-slate-400">{team.drawn}</td>
+                    <td className="py-3.5 px-4 text-center text-rose-400">{team.lost}</td>
+                    <td className="py-3.5 px-4 text-center font-mono">{team.gd > 0 ? `+${team.gd}` : team.gd}</td>
+                    <td className="py-3.5 px-4 text-center font-black text-sm" style={{ color: 'var(--color-accent)' }}>{team.points}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
+
+      {/* ── 7. FINAL HIGH-INTENSITY CONVERSION CTA ───────────────────────── */}
+      <section
+        className="relative overflow-hidden rounded-3xl border p-10 sm:p-16 text-center space-y-6 shadow-2xl"
+        style={{
+          borderColor: 'color-mix(in srgb, var(--color-accent) 40%, transparent)',
+          background: `linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 15%, #060b14), #060b14)`,
+        }}
+      >
+        <div
+          className="pointer-events-none absolute -right-20 -bottom-20 h-96 w-96 rounded-full blur-[120px] opacity-30"
+          style={{ backgroundColor: 'var(--color-accent)' }}
+        />
+
+        <div
+          className="inline-flex items-center gap-2 rounded-full px-4 py-1 text-xs font-black uppercase tracking-widest border"
+          style={{
+            backgroundColor: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+            color: 'var(--color-accent)',
+            borderColor: 'color-mix(in srgb, var(--color-accent) 30%, transparent)',
+          }}
+        >
+          <span>Be Part of the Next Chapter</span>
+        </div>
+
+        <h2 className="font-display text-3xl font-black text-white sm:text-5xl max-w-2xl mx-auto leading-tight">
+          Join the Club Today. Step onto the Pitch with Kolothum Kadhavu FC.
+        </h2>
+
+        <p className="max-w-xl mx-auto text-sm sm:text-base text-slate-300">
+          Whether you are a player tracking your match stats or a manager planning tactical lineups, get full access to the portal today.
+        </p>
+
+        <div className="flex flex-wrap items-center justify-center gap-4 pt-4">
+          {user ? (
+            <Link
+              to={dashboardLink}
+              className="rounded-2xl px-9 py-4 text-base font-black text-slate-950 transition-all duration-300 hover:scale-105 flex items-center gap-2 shadow-2xl"
+              style={{
+                backgroundColor: 'var(--color-accent)',
+                boxShadow: '0 0 35px color-mix(in srgb, var(--color-accent) 50%, transparent)',
+              }}
+            >
+              <span>Go to Your Dashboard</span>
+              <FiArrowRight size={20} />
+            </Link>
+          ) : (
+            <>
+              <Link
+                to="/login"
+                className="rounded-2xl px-9 py-4 text-base font-black text-slate-950 transition-all duration-300 hover:scale-105 flex items-center gap-2 shadow-2xl"
+                style={{
+                  backgroundColor: 'var(--color-accent)',
+                  boxShadow: '0 0 35px color-mix(in srgb, var(--color-accent) 50%, transparent)',
+                }}
+              >
+                <FiLogIn size={20} />
+                <span>Login Now</span>
+              </Link>
+              <Link
+                to="/register"
+                className="rounded-2xl border px-9 py-4 text-base font-black transition-all duration-300 flex items-center gap-2"
+                style={{
+                  borderColor: 'color-mix(in srgb, var(--color-accent) 50%, transparent)',
+                  backgroundColor: 'slate-900',
+                  color: 'var(--color-accent)',
+                }}
+              >
+                <FiUserPlus size={20} />
+                <span>Register Account</span>
+              </Link>
+            </>
+          )}
+        </div>
+      </section>
     </div>
   );
-}
+};
+
+export default HomePage;

@@ -22,6 +22,7 @@ router.get('/eligible-members', requireRole('admin', 'manager'), getEligibleMemb
 router.get('/eligible-dms', getEligibleDmMembers);
 
 router.post('/direct', getOrCreateDirectRoom);
+router.post('/direct-room', getOrCreateDirectRoom);
 
 router.get('/rooms/:id/messages', getRoomMessages);
 router.post('/rooms/:id/read', markRoomAsRead);

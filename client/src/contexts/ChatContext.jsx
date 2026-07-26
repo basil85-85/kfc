@@ -156,6 +156,76 @@ export const ChatProvider = ({ children }) => {
     [user, socket, rooms]
   );
 
+  // Create Custom Chat Room (Admin/Manager)
+  const createRoom = async (name, initialMemberIds = []) => {
+    try {
+      const { data } = await api.post('/chat/rooms', {
+        name,
+        type: 'custom',
+        initialMemberIds,
+      });
+      const newRoom = data.room || data;
+      setRooms((prev) => {
+        if (prev.some((r) => r._id === newRoom._id)) return prev;
+        return [newRoom, ...prev];
+      });
+      setActiveRoomId(newRoom._id);
+      toast?.addToast(`Room "${name}" created!`, 'success');
+      if (socket && socket.connected) {
+        socket.emit('join_rooms');
+      }
+      return newRoom;
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Failed to create room';
+      toast?.addToast(errorMsg, 'error');
+      throw new Error(errorMsg);
+    }
+  };
+
+  // Update Room Members (Admin/Manager)
+  const updateRoomMembers = async (roomId, addMemberIds = [], removeMemberIds = []) => {
+    try {
+      const { data } = await api.put(`/chat/rooms/${roomId}/members`, {
+        addMemberIds,
+        removeMemberIds,
+      });
+      const updatedRoom = data.room || data;
+      setRooms((prev) =>
+        prev.map((r) => (r._id === roomId ? { ...r, ...updatedRoom } : r))
+      );
+      toast?.addToast('Room members updated!', 'success');
+      if (socket && socket.connected) {
+        socket.emit('join_rooms');
+      }
+      return updatedRoom;
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Failed to update members';
+      toast?.addToast(errorMsg, 'error');
+      throw new Error(errorMsg);
+    }
+  };
+
+  // Create Direct Message Room
+  const createDirectRoom = async (targetUserId) => {
+    try {
+      const { data } = await api.post('/chat/direct', { targetUserId });
+      const dmRoom = data.room || data;
+      setRooms((prev) => {
+        if (prev.some((r) => r._id === dmRoom._id)) return prev;
+        return [dmRoom, ...prev];
+      });
+      setActiveRoomId(dmRoom._id);
+      if (socket && socket.connected) {
+        socket.emit('join_rooms');
+      }
+      return dmRoom;
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Failed to open DM room';
+      toast?.addToast(errorMsg, 'error');
+      throw new Error(errorMsg);
+    }
+  };
+
   // Initialize socket connection
   useEffect(() => {
     if (!user) {
@@ -388,6 +458,9 @@ export const ChatProvider = ({ children }) => {
         deleteMessage,
         markRoomRead,
         fetchRooms,
+        createRoom,
+        updateRoomMembers,
+        createDirectRoom,
         incomingCall,
         setIncomingCall,
         outgoingCall,
